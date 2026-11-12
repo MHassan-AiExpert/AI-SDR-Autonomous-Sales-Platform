@@ -41,7 +41,9 @@ export function ActionForm({
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
+    // Include the clicked button's name and value, as a normal form post would
+    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+    const data = new FormData(event.currentTarget, submitter && submitter.name ? submitter : undefined);
     startTransition(() => formAction(data));
   }
 

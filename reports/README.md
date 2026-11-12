@@ -19,5 +19,6 @@ Every feature of the platform ships with three documents:
 | [F05](F05-lead-sourcing/feature-report.md) | AI setup agent and lead sourcing: niche to ICP and source plan; Apollo, Google Maps, Instagram and LLM search; de-duplication, suppression, campaigns and leads screens | M1, M2, M14, M15, Section 10 | 101 passed + 2 live checks |
 | [F06](F06-enrichment-verification/feature-report.md) | Enrichment and verification: decision makers from Apollo or company websites, ZeroBounce email checks, Twilio line type, daily scheduling | M2, M3, M15, Section 10 | 55 passed + 2 live checks |
 | [F07](F07-research-scoring/feature-report.md) | AI research and lead scoring: company briefs, explainable 0-100 scores, outreach threshold, lead profile with timeline | M4, M15, M16, Section 10 | 38 passed + 2 live checks |
+| [F08](F08-email-outreach/feature-report.md) | AI copywriting and email outreach: personal sequences, approval review, Instantly sending within limits, pause propagation | M1, M5, M6, M19, M21 | 47 passed + 2 live checks |
 
 Run the infrastructure and database tests with `npm test`, the agent service tests with `cd agents && npm test`, and the web app tests with `cd web && npm test`.

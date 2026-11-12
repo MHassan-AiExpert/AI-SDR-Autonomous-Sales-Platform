@@ -12,6 +12,8 @@ import { SOURCE_LABELS, type Campaign, type Job, type Store } from './store.ts';
 import { log } from './log.ts';
 import { runEnrichment as enrich, type EnrichmentDeps } from './enrichment.ts';
 import { runResearch as research, ResearchError } from './research.ts';
+import { runCopywriting as copywrite, CopyError } from './copywriting.ts';
+import { runEmailOutreach as outreach, OutreachError } from './outreach.ts';
 import type { Resolver } from './sources/website.ts';
 
 export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; scheduleHours?: number };
@@ -199,10 +201,29 @@ export async function runResearch(deps: Deps, job: Job) {
   }
 }
 
-const HANDLERS = { campaign_plan: runCampaignPlan, lead_sourcing: runLeadSourcing, enrichment: runEnrichment, research: runResearch } as const;
+async function withCampaign<T>(deps: Deps, job: Job, fn: (campaign: NonNullable<Awaited<ReturnType<Store['campaign']>>>) => Promise<T>): Promise<T> {
+  const campaign = await deps.store.campaign(job.workspace_id, job.campaign_id);
+  if (!campaign) throw new JobError('The campaign no longer exists');
+  try {
+    return await fn(campaign);
+  } catch (err) {
+    if (err instanceof CopyError || err instanceof OutreachError) throw new JobError(err.message);
+    throw err;
+  }
+}
+
+export const runCopywriting = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => copywrite(deps, job, c));
+export const runEmailOutreach = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => outreach(deps, job, c));
+
+const HANDLERS = {
+  campaign_plan: runCampaignPlan, lead_sourcing: runLeadSourcing, enrichment: runEnrichment, research: runResearch,
+  copywriting: runCopywriting, email_outreach: runEmailOutreach,
+} as const;
 
 // After a job succeeds, the next stage of the pipeline starts by itself
-const NEXT_STAGE: Partial<Record<Job['type'], 'enrichment' | 'research'>> = { lead_sourcing: 'enrichment', enrichment: 'research' };
+const NEXT_STAGE: Partial<Record<Job['type'], 'enrichment' | 'research' | 'copywriting' | 'email_outreach'>> = {
+  lead_sourcing: 'enrichment', enrichment: 'research', research: 'copywriting', copywriting: 'email_outreach',
+};
 
 /** Claims and runs up to `limit` jobs. Each job's failure is recorded on that job only. */
 export async function runQueuedJobs(deps: Deps, limit: number) {
@@ -222,7 +243,9 @@ export async function runQueuedJobs(deps: Deps, limit: number) {
       await deps.store.finishJob(job.id, 'succeeded', result, null);
       await deps.store.runLogFinish(runLog, 'success', null);
       const next = NEXT_STAGE[job.type];
-      if (next) await deps.store.enqueue(job.workspace_id, job.campaign_id, next).catch(() => false);
+      // Outreach only follows on when the campaign's emails are live
+      const go = next && (next !== 'email_outreach' || (await deps.store.campaign(job.workspace_id, job.campaign_id))?.outreach_status === 'live');
+      if (next && go) await deps.store.enqueue(job.workspace_id, job.campaign_id, next).catch(() => false);
       outcomes.push({ id: job.id, type: job.type, status: 'succeeded' });
       log('info', 'job succeeded', { job: job.id, type: job.type, workspace_id: job.workspace_id, correlation_id: job.correlation_id, ms: Date.now() - started });
     } catch (err) {

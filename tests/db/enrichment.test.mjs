@@ -14,13 +14,14 @@ const campaign = async (ws, status = 'active', niche = 'dentists') =>
 const due = (hours = 24) => asService(db, async (tx) => (await tx.query('select agent_jobs_enqueue_due($1) as n', [hours])).rows[0].n);
 const jobs = async (c) => (await db.query(`select type, status, requested_by from agent_jobs where campaign_id = $1 order by type`, [c])).rows;
 
-test('ENR-01 the daily run queues sourcing, enrichment and research for each active campaign', async () => {
+test('ENR-01 the daily run queues sourcing, enrichment, research and copywriting for each active campaign', async () => {
   const a = await campaign(wsA);
   const draft = await campaign(wsA, 'draft');
   const paused = await campaign(wsA, 'paused');
   const noNiche = await campaign(wsA, 'active', null);
-  assert.equal(await due(), 3);
+  assert.equal(await due(), 4);
   assert.deepEqual(await jobs(a), [
+    { type: 'copywriting', status: 'queued', requested_by: null },
     { type: 'enrichment', status: 'queued', requested_by: null },
     { type: 'lead_sourcing', status: 'queued', requested_by: null },
     { type: 'research', status: 'queued', requested_by: null },
@@ -33,7 +34,7 @@ test('ENR-02 running it again queues nothing while jobs wait or ran recently', a
   await db.query(`update agent_jobs set status = 'succeeded', finished_at = now() where workspace_id = $1`, [wsA]);
   assert.equal(await due(), 0);
   await db.query(`update agent_jobs set created_at = now() - interval '25 hours' where workspace_id = $1`, [wsA]);
-  assert.equal(await due(), 3);
+  assert.equal(await due(), 4);
 });
 
 test('ENR-03 a paused workspace gets no scheduled jobs', async () => {
@@ -43,7 +44,7 @@ test('ENR-03 a paused workspace gets no scheduled jobs', async () => {
   assert.deepEqual(await jobs(b), []);
   await db.query('update workspaces set outreach_paused = false where id = $1', [wsB]);
   await due();
-  assert.equal((await jobs(b)).length, 3);
+  assert.equal((await jobs(b)).length, 4);
 });
 
 test('ENR-04 a finished sourcing job can hand over to enrichment exactly once', async () => {

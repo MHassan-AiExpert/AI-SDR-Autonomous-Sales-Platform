@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireWorkspace } from '@/lib/session';
 import { uuidSchema } from '@/lib/validation';
+import { EMAIL_STATUS_LABELS } from '@/lib/outreach';
 import { LINE_TYPE_LABELS, SOURCE_LABELS, STAGE_LABELS, VERIFICATION_LABELS, readLeadReport, type LeadSource, type LeadStage, type VerificationStatus } from '@/lib/campaigns';
 
 export const metadata: Metadata = { title: 'Lead' };
@@ -31,6 +32,12 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
     .maybeSingle();
   if (!data) notFound();
   const lead = data as unknown as Lead;
+  const { data: sequence } = await supabase
+    .from('emails')
+    .select('id, step, subject, body, status, queued_at, campaign_id')
+    .eq('workspace_id', workspace.id)
+    .eq('lead_id', lead.id)
+    .order('step');
   const { data: activities } = await supabase
     .from('activities')
     .select('id, type, channel, summary, actor, created_at')
@@ -96,6 +103,21 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
             <p className="muted">Company fit {report.fit_score ?? '—'}, intent {report.intent_score ?? '—'}, final score {report.score ?? '—'} against a threshold of {report.threshold ?? threshold}.</p>
             <List items={[...(report.score_reasons ?? []), ...(report.model_reasons ?? [])]} />
             {report.disqualifiers?.length ? <><h3>Disqualifiers</h3><List items={report.disqualifiers} /></> : null}
+          </>
+        )}
+      </section>
+
+      <section className="card stack" aria-labelledby="emails">
+        <h2 id="emails">Email sequence</h2>
+        {!sequence?.length ? <p className="muted">No emails written for this lead yet.</p> : (
+          <>
+            {sequence.map((e) => (
+              <article key={e.id} className="stack">
+                <div className="spread"><strong>{e.step === 1 ? 'First email' : `Follow-up ${e.step - 1}`}: {e.subject}</strong><span className="badge">{EMAIL_STATUS_LABELS[e.status] ?? e.status}</span></div>
+                <p className="pre">{e.body}</p>
+              </article>
+            ))}
+            {sequence[0]?.campaign_id ? <p><Link href={`${base}/campaigns/${sequence[0].campaign_id}/emails?status=${sequence[0].status === 'queued' ? 'queued' : sequence[0].status}`}>Review in the campaign</Link></p> : null}
           </>
         )}
       </section>

@@ -1,5 +1,6 @@
 'use server';
 
+import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { friendlyDbError } from '@/lib/errors';
@@ -7,6 +8,7 @@ import type { FormState } from '@/lib/form-state';
 import { requireUser } from '@/lib/session';
 import { JOB_TYPES, parseCampaignForm, scoreThreshold, type JobType } from '@/lib/campaigns';
 import { firstError, uuidSchema } from '@/lib/validation';
+import { parseEmailSettings, outreachReadiness } from '@/lib/outreach';
 
 const NO_PERMISSION = 'Only owners and admins can manage campaigns.';
 
@@ -60,6 +62,8 @@ export async function queueAgentJob(_prev: FormState, form: FormData): Promise<F
     lead_sourcing: 'The lead sourcing agent will start within a minute.',
     enrichment: 'The enrichment agent will find contacts and verify emails and phones within a minute.',
     research: 'The research agent will research and score new leads within a minute.',
+    copywriting: 'The copywriting agent will write emails for new qualified leads within a minute.',
+    email_outreach: 'Approved emails will be handed to Instantly within a minute.',
   };
   return { notice: notices[type] };
 }
@@ -102,4 +106,107 @@ export async function setScoreThreshold(_prev: FormState, form: FormData): Promi
   if (!data?.length) return { error: NO_PERMISSION };
   revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
   return { notice: `Leads scoring ${threshold.data} or more now qualify for outreach. Existing scores are kept; re-run research to re-score.` };
+}
+
+export async function saveEmailSettings(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  const parsed = parseEmailSettings(form);
+  if (!parsed.success) return { error: firstError(parsed.error) };
+
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase
+    .from('campaigns')
+    .update({ ...parsed.data, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data)
+    .eq('id', campaignId.data)
+    .select('id, instantly_campaign_id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
+  return {
+    notice: data[0].instantly_campaign_id
+      ? 'Email settings saved. Sequence length and schedule changes apply to new campaigns; adjust the live Instantly campaign there if needed.'
+      : 'Email settings saved.',
+  };
+}
+
+export async function setOutreachStatus(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  const status = form.get('status');
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  if (status !== 'live' && status !== 'paused') return { error: 'Unknown outreach status.' };
+
+  const { supabase, user } = await requireUser();
+  if (status === 'live') {
+    const [{ data: c }, { data: w }, { data: tools }] = await Promise.all([
+      supabase.from('campaigns').select('sender_name, email_footer, sending_accounts, status').eq('workspace_id', ws.data).eq('id', campaignId.data).maybeSingle(),
+      supabase.from('workspaces').select('enabled_channels, setup_checklist').eq('id', ws.data).maybeSingle(),
+      supabase.from('integrations').select('tool, status').eq('workspace_id', ws.data).eq('tool', 'instantly'),
+    ]);
+    if (!c || !w) return { error: 'Campaign not found.' };
+    const { items, ready } = outreachReadiness({
+      instantlyConnected: (tools ?? []).some((t) => t.status === 'connected'),
+      emailChannelOn: (w.enabled_channels as Record<string, boolean>)?.email !== false,
+      senderName: c.sender_name, footer: c.email_footer, accounts: c.sending_accounts,
+      sendingDomainsChecked: (w.setup_checklist as Record<string, unknown>)?.sending_domains === true && (w.setup_checklist as Record<string, unknown>)?.mailbox_warmup === true,
+    });
+    if (!ready) return { error: `Before launching: ${items.filter((i) => i.blocking && !i.done).map((i) => i.label.toLowerCase()).join('; ')}.` };
+    if (c.status !== 'active') return { error: 'Resume the campaign before launching email outreach.' };
+  }
+
+  const { data, error } = await supabase
+    .from('campaigns')
+    .update({ outreach_status: status, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data)
+    .eq('id', campaignId.data)
+    .select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  if (status === 'live') {
+    // Start straight away instead of waiting for the daily run
+    await supabase.from('agent_jobs').insert({ workspace_id: ws.data, campaign_id: campaignId.data, type: 'email_outreach', requested_by: user.id });
+  }
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
+  return { notice: status === 'live' ? 'Email outreach is live. Approved sequences go to Instantly within a minute.' : 'Email outreach paused. The Instantly campaign is paused within a minute.' };
+}
+
+const emailEditSchema = z.object({
+  subject: z.string().trim().min(2, 'Add a subject').max(200, 'Subject is too long'),
+  body: z.string().trim().min(10, 'Add the email text').max(5000, 'Email is too long'),
+});
+
+export async function updateEmail(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const emailId = uuidSchema.safeParse(form.get('email_id'));
+  const decision = form.get('decision');
+  if (!ws.success || !emailId.success) return { error: 'Email not found.' };
+  if (decision !== 'save' && decision !== 'approve' && decision !== 'reject') return { error: 'Unknown action.' };
+  const parsed = emailEditSchema.safeParse({ subject: form.get('subject') ?? '', body: form.get('body') ?? '' });
+  if (!parsed.success) return { error: firstError(parsed.error) };
+  if (/(\{\{|\}\}|<[a-z!/])/i.test(parsed.data.subject + parsed.data.body)) return { error: 'Emails are plain text: remove HTML and {{ }} placeholders.' };
+
+  const update: Record<string, string> = { ...parsed.data };
+  if (decision === 'approve') update.status = 'approved';
+  if (decision === 'reject') update.status = 'rejected';
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('emails').update(update).eq('workspace_id', ws.data).eq('id', emailId.data).select('id, campaign_id');
+  if (error) return { error: error.code === '23514' && error.message ? error.message : friendlyDbError(error) };
+  if (!data?.length) return { error: 'You do not have permission to change this email.' };
+  revalidatePath(`/w/${ws.data}/campaigns/${data[0].campaign_id}/emails`);
+  return { notice: decision === 'approve' ? 'Approved.' : decision === 'reject' ? 'Rejected. This lead will not be emailed unless you approve it again.' : 'Saved.' };
+}
+
+export async function approveAllDrafts(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('emails').update({ status: 'approved' })
+    .eq('workspace_id', ws.data).eq('campaign_id', campaignId.data).eq('status', 'draft').select('id');
+  if (error) return { error: friendlyDbError(error) };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}/emails`);
+  return { notice: data?.length ? `${data.length} emails approved.` : 'There are no drafts waiting for approval.' };
 }

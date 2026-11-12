@@ -381,6 +381,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F05](reports/F05-lead-sourcing/feature-report.md) | AI setup agent and lead sourcing across Apollo, Google Maps, Instagram and LLM search, with de-duplication, suppression and lead screens | 101 passed |
 | [F06](reports/F06-enrichment-verification/feature-report.md) | Enrichment and verification: decision makers, verified emails, phone line types, daily runs | 55 passed |
 | [F07](reports/F07-research-scoring/feature-report.md) | AI research briefs, explainable lead scores, outreach threshold and lead profiles | 38 passed |
+| [F08](reports/F08-email-outreach/feature-report.md) | AI-written personal email sequences, approval review and Instantly sending | 47 passed |
 
 ---
 

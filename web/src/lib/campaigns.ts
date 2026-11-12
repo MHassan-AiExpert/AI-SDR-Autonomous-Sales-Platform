@@ -110,9 +110,9 @@ export function filtersToQuery(f: LeadFilters, overrides: Partial<LeadFilters> =
   return s ? `?${s}` : '';
 }
 
-export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score' };
+export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails' };
 
-export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research'] as const;
+export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach'] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 export const JOB_STATUS_LABELS: Record<string, string> = { queued: 'Queued', running: 'Running', succeeded: 'Done', failed: 'Failed' };
 
@@ -130,6 +130,17 @@ export function describeJobResult(type: string, status: string, result: unknown,
   }
   if (type === 'enrichment') return describeEnrichment(r);
   if (type === 'research') return describeResearch(r);
+  if (type === 'copywriting') {
+    if (typeof r.note === 'string') return r.note;
+    const n = num(r.leads_written);
+    if (!n && !num(r.failed)) return 'No new qualified leads to write to.';
+    return `${plural(n, 'email sequence')} written${r.waiting_for_approval === true ? ', waiting for approval' : ' and approved'}${num(r.failed) ? `; ${num(r.failed)} could not be written and will be retried` : ''}.`;
+  }
+  if (type === 'email_outreach') {
+    if (r.action === 'sending') return `${plural(num(r.leads_added), 'lead')} added to Instantly today (daily limit ${num(r.daily_limit)}).`;
+    if (r.action === 'paused') return `Instantly campaign paused. ${typeof r.reason === 'string' ? r.reason : ''}`.trim();
+    return typeof r.reason === 'string' ? r.reason : 'Nothing to send.';
+  }
   if (typeof r.note === 'string') return r.note;
   const added = typeof r.added === 'number' ? r.added : 0;
   const parts: string[] = [];

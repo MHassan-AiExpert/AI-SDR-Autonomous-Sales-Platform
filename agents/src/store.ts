@@ -23,7 +23,7 @@ export type Job = {
   id: string;
   workspace_id: string;
   campaign_id: string;
-  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research';
+  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach';
   attempts: number;
   correlation_id: string;
 };
@@ -39,6 +39,21 @@ export type Campaign = {
   score_threshold: number;
   icp: Record<string, unknown>;
   source_plan: Record<string, unknown>;
+  status: string;
+  mode: string;
+  outreach_status: string;
+  sender_name: string | null;
+  email_footer: string | null;
+  sending_accounts: unknown[];
+  send_timezone: string;
+  send_window_start: string;
+  send_window_end: string;
+  send_days: Record<string, boolean>;
+  daily_send_limit: number;
+  follow_up_count: number;
+  follow_up_delay_days: number;
+  instantly_campaign_id: string | null;
+  instantly_state: 'active' | 'paused' | null;
 };
 
 export class Store {
@@ -57,7 +72,9 @@ export class Store {
 
   async campaign(workspaceId: string, campaignId: string): Promise<Campaign | null> {
     const rows = await this.sql`
-      select id, workspace_id, name, niche, offer, target_areas, daily_lead_limit, score_threshold, icp, source_plan
+      select id, workspace_id, name, niche, offer, target_areas, daily_lead_limit, score_threshold, icp, source_plan,
+             status, mode, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start,
+             send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state
       from campaigns where workspace_id = ${workspaceId}::uuid and id = ${campaignId}::uuid`;
     if (!rows.length) return null;
     const c = rows[0] as unknown as Campaign;
@@ -222,7 +239,7 @@ export class Store {
     return Number(rows[0].n);
   }
 
-  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research'): Promise<boolean> {
+  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach'): Promise<boolean> {
     const rows = await this.sql`select agent_job_enqueue(${workspaceId}::uuid, ${campaignId}::uuid, ${type}) as ok`;
     return rows[0].ok === true;
   }
@@ -347,6 +364,106 @@ export class Store {
     });
   }
 
+  // ---------------------------------------------------------------- copywriting and outreach
+
+  async workspaceMode(workspaceId: string): Promise<string> {
+    const rows = await this.sql`select automation_mode from workspaces where id = ${workspaceId}::uuid`;
+    return String(rows[0]?.automation_mode ?? 'autopilot');
+  }
+
+  async workspaceState(workspaceId: string): Promise<{ outreach_paused: boolean; enabled_channels: Record<string, boolean> }> {
+    const rows = await this.sql`select outreach_paused, enabled_channels from workspaces where id = ${workspaceId}::uuid`;
+    return { outreach_paused: rows[0]?.outreach_paused === true, enabled_channels: (rows[0]?.enabled_channels ?? {}) as Record<string, boolean> };
+  }
+
+  async activePlaybook(workspaceId: string): Promise<unknown> {
+    const rows = await this.sql`select content from playbooks where workspace_id = ${workspaceId}::uuid and is_active limit 1`;
+    return rows[0]?.content ?? null;
+  }
+
+  /** Qualified, verified, uncontacted leads that have no emails in this campaign yet. */
+  async leadsToWrite(workspaceId: string, campaignId: string, threshold: number, limit: number) {
+    return (await this.sql`
+      select l.id, l.full_name, l.title, l.email, coalesce(c.name, 'your company') as company_name, l.ai_report
+      from leads l
+      left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      where l.workspace_id = ${workspaceId}::uuid and l.campaign_id = ${campaignId}::uuid
+        and l.stage = 'new' and l.email is not null and l.verification_status = 'valid'
+        and l.score >= ${threshold} and l.researched_at is not null
+        and not app.is_suppressed(l.workspace_id, l.email, l.phone)
+        and not exists (select 1 from emails e where e.workspace_id = l.workspace_id and e.lead_id = l.id and e.campaign_id = ${campaignId}::uuid)
+      order by l.score desc, l.created_at
+      limit ${limit}`) as unknown as { id: string; full_name: string | null; title: string | null; email: string; company_name: string; ai_report: Record<string, unknown> | null }[];
+  }
+
+  async saveDrafts(workspaceId: string, campaignId: string, leadId: string, drafts: { subject: string; body: string }[], status: 'draft' | 'approved'): Promise<boolean> {
+    return this.sql.begin(async (tx) => {
+      let inserted = 0;
+      for (const [i, d] of drafts.entries()) {
+        const rows = await tx`
+          insert into emails (workspace_id, lead_id, campaign_id, step, subject, body, status, idempotency_key)
+          values (${workspaceId}::uuid, ${leadId}::uuid, ${campaignId}::uuid, ${i + 1}, ${d.subject}, ${d.body}, ${status},
+                  ${`${campaignId}:${leadId}:${i + 1}`})
+          on conflict (workspace_id, idempotency_key) do nothing
+          returning id`;
+        inserted += rows.length;
+      }
+      if (inserted) {
+        await tx`
+          insert into activities (workspace_id, lead_id, type, channel, summary, actor)
+          values (${workspaceId}::uuid, ${leadId}::uuid, 'email', 'email',
+                  ${`AI wrote a ${drafts.length}-email sequence${status === 'draft' ? ', waiting for approval' : ''}`}, 'ai')`;
+      }
+      return inserted > 0;
+    });
+  }
+
+  async setInstantlyState(workspaceId: string, campaignId: string, instantlyId: string, state: 'active' | 'paused' | null) {
+    await this.sql`
+      update campaigns set instantly_campaign_id = ${instantlyId}, instantly_state = ${state}, updated_at = now()
+      where workspace_id = ${workspaceId}::uuid and id = ${campaignId}::uuid`;
+  }
+
+  async leadsQueuedToday(workspaceId: string, campaignId: string): Promise<number> {
+    const rows = await this.sql`
+      select count(distinct lead_id)::int as n from emails
+      where workspace_id = ${workspaceId}::uuid and campaign_id = ${campaignId}::uuid and step = 1
+        and queued_at >= date_trunc('day', now())`;
+    return rows[0].n as number;
+  }
+
+  /** Leads whose whole sequence is approved and who are still safe to email. */
+  async sequencesReady(workspaceId: string, campaignId: string, threshold: number, steps: number, limit: number): Promise<ReadySequence[]> {
+    return (await this.sql`
+      select l.id as lead_id, l.email, l.full_name, l.title, coalesce(c.name, '') as company_name, c.domain,
+             json_agg(json_build_object('id', e.id, 'step', e.step, 'subject', e.subject, 'body', e.body) order by e.step) as emails
+      from leads l
+      join emails e on e.workspace_id = l.workspace_id and e.lead_id = l.id and e.campaign_id = ${campaignId}::uuid
+      left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      where l.workspace_id = ${workspaceId}::uuid and l.campaign_id = ${campaignId}::uuid
+        and l.stage = 'new' and l.email is not null and l.verification_status = 'valid' and l.score >= ${threshold}
+        and not app.is_suppressed(l.workspace_id, l.email, l.phone)
+      group by l.id, l.email, l.full_name, l.title, c.name, c.domain, l.score, l.created_at
+      having count(*) filter (where e.status = 'approved' and e.step <= ${steps}) = ${steps}
+         and count(*) filter (where e.status not in ('approved', 'rejected')) = 0
+      order by l.score desc, l.created_at
+      limit ${limit}`) as unknown as ReadySequence[];
+  }
+
+  async markQueued(workspaceId: string, leadId: string, emailIds: string[], providerId: string | null, count: number) {
+    await this.sql.begin(async (tx) => {
+      await tx`
+        update emails set status = 'queued', provider_id = ${providerId}, queued_at = now()
+        where workspace_id = ${workspaceId}::uuid and id = any(${emailIds}::uuid[])`;
+      await tx`
+        update leads set stage = 'contacted', stage_changed_at = now(), updated_at = now()
+        where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid and stage = 'new'`;
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor)
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'email', 'email', ${`Email sequence started in Instantly (${count} emails)`}, 'ai')`;
+    });
+  }
+
   async runLogStart(workspaceId: string, workflow: string, correlationId: string): Promise<number> {
     const rows = await this.sql`
       insert into run_logs (workspace_id, workflow, status, correlation_id)
@@ -370,6 +487,11 @@ export const SOURCE_LABELS: Record<LeadCandidate['source'], string> = {
   apollo: 'Apollo', google_maps: 'Google Maps', instagram: 'Instagram', llm_search: 'LLM search',
   clay: 'Clay', facebook: 'Facebook', linkedin: 'LinkedIn', tiktok: 'TikTok', x: 'X', csv: 'CSV import',
   inbound_call: 'an inbound call', manual: 'manual entry',
+};
+
+export type ReadySequence = {
+  lead_id: string; email: string; full_name: string | null; title: string | null; company_name: string; domain: string | null;
+  emails: { id: string; step: number; subject: string; body: string }[];
 };
 
 export type ResearchLead = {
