@@ -15,9 +15,10 @@ import { runResearch as research, ResearchError } from './research.ts';
 import { runCopywriting as copywrite, CopyError } from './copywriting.ts';
 import { runEmailOutreach as outreach, OutreachError } from './outreach.ts';
 import { runReplyHandling as handleReplies } from './replies.ts';
+import { runReplySend as sendAnswers } from './answers.ts';
 import type { Resolver } from './sources/website.ts';
 
-export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; scheduleHours?: number; appUrl?: string };
+export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; scheduleHours?: number; appUrl?: string; webhookBaseUrl?: string };
 
 export class JobError extends Error {}
 
@@ -216,10 +217,11 @@ async function withCampaign<T>(deps: Deps, job: Job, fn: (campaign: NonNullable<
 export const runCopywriting = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => copywrite(deps, job, c));
 export const runEmailOutreach = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => outreach(deps, job, c));
 export const runReplyHandling = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => handleReplies(deps, job, c));
+export const runReplySend = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => sendAnswers(deps, job, c));
 
 const HANDLERS = {
   campaign_plan: runCampaignPlan, lead_sourcing: runLeadSourcing, enrichment: runEnrichment, research: runResearch,
-  copywriting: runCopywriting, email_outreach: runEmailOutreach, reply_handling: runReplyHandling,
+  copywriting: runCopywriting, email_outreach: runEmailOutreach, reply_handling: runReplyHandling, reply_send: runReplySend,
 } as const;
 
 // After a job succeeds, the next stage of the pipeline starts by itself

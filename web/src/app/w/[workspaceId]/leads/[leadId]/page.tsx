@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 import { requireWorkspace } from '@/lib/session';
 import { uuidSchema } from '@/lib/validation';
 import { EMAIL_STATUS_LABELS } from '@/lib/outreach';
-import { REPLY_LABELS, replyBadge, safeConversationUrl, type ReplyClass } from '@/lib/replies';
+import { ANSWER_LABELS, REPLY_LABELS, replyBadge, safeConversationUrl, safeMeetingUrl, type ReplyClass } from '@/lib/replies';
 import { LINE_TYPE_LABELS, SOURCE_LABELS, STAGE_LABELS, VERIFICATION_LABELS, readLeadReport, type LeadSource, type LeadStage, type VerificationStatus } from '@/lib/campaigns';
 
 export const metadata: Metadata = { title: 'Lead' };
@@ -41,11 +41,18 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
     .order('step');
   const { data: replies } = await supabase
     .from('replies')
-    .select('id, body, classification, summary, suggested_response, conversation_url, created_at')
+    .select('id, body, classification, summary, suggested_response, conversation_url, created_at, answer, answer_status')
     .eq('workspace_id', workspace.id)
     .eq('lead_id', lead.id)
     .order('created_at', { ascending: false })
     .limit(20);
+  const { data: meetings } = await supabase
+    .from('meetings')
+    .select('id, starts_at, status, zoom_url, event_name, run_by')
+    .eq('workspace_id', workspace.id)
+    .eq('lead_id', lead.id)
+    .order('starts_at', { ascending: false })
+    .limit(10);
   const { data: activities } = await supabase
     .from('activities')
     .select('id, type, channel, summary, actor, created_at')
@@ -130,6 +137,23 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
         )}
       </section>
 
+      <section className="card stack" aria-labelledby="meetings">
+        <h2 id="meetings">Meetings</h2>
+        {!meetings?.length ? <p className="muted">No meetings booked yet.</p> : (
+          <ul className="list">
+            {meetings.map((m) => {
+              const join = safeMeetingUrl(m.zoom_url);
+              return (
+                <li key={m.id} className="spread">
+                  <span><time dateTime={m.starts_at}>{new Date(m.starts_at).toUTCString()}</time>{m.event_name ? ` · ${m.event_name}` : ''} · {m.run_by === 'ai_closer' ? 'AI closer' : 'Your team'}</span>
+                  <span className="row"><span className="badge">{m.status}</span>{join && m.status === 'scheduled' ? <a href={join} target="_blank" rel="noopener noreferrer">Join</a> : null}</span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
       <section className="card stack" aria-labelledby="replies">
         <h2 id="replies">Replies</h2>
         {!replies?.length ? <p className="muted">No replies yet.</p> : replies.map((r) => {
@@ -141,7 +165,7 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
                 <span className={`badge badge-${replyBadge(r.classification)}`}>{r.classification ? REPLY_LABELS[r.classification as ReplyClass] ?? r.classification : 'Unread'}</span>
               </div>
               <blockquote className="pre">{r.body}</blockquote>
-              {r.suggested_response ? <details><summary>Suggested reply</summary><p className="pre">{r.suggested_response}</p></details> : null}
+              {r.answer || r.suggested_response ? <details><summary>Answer · {ANSWER_LABELS[r.answer_status] ?? r.answer_status}</summary><p className="pre">{r.answer ?? r.suggested_response}</p></details> : null}
               {url ? <a href={url} target="_blank" rel="noopener noreferrer">Answer in Instantly</a> : null}
             </article>
           );

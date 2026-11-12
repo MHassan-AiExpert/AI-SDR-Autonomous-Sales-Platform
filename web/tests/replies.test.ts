@@ -29,3 +29,20 @@ describe('reply inbox', () => {
       .toBe('No new replies. Slack alert failed: Slack rejected the stored credentials');
   });
 });
+
+import { ANSWER_LABELS, safeMeetingUrl, BOOKING_EVENT_TYPE } from '@/lib/replies';
+
+describe('answers and meetings', () => {
+  it('RIN-05 answer states have labels; only https meeting links and Calendly event types are accepted', () => {
+    for (const s of ['none', 'draft', 'approved', 'sending', 'sent', 'failed']) expect(ANSWER_LABELS[s]).toBeTruthy();
+    expect(safeMeetingUrl('https://zoom.us/j/123')).toBe('https://zoom.us/j/123');
+    for (const bad of ['http://zoom.us/j/1', 'javascript:alert(1)', 'https://a b', null]) expect(safeMeetingUrl(bad)).toBeNull();
+    expect(BOOKING_EVENT_TYPE.test('https://api.calendly.com/event_types/ABC-123')).toBe(true);
+    expect(BOOKING_EVENT_TYPE.test('https://calendly.com/me/15min')).toBe(false);
+  });
+
+  it('RIN-06 answer sending runs are described in plain words', () => {
+    expect(describeJobResult('reply_send', 'succeeded', { sent: 2, failed: 1, skipped: 1 }, null)).toBe('2 answers sent; 1 could not be sent; 1 skipped because the lead opted out or the thread is unknown.');
+    expect(describeJobResult('reply_send', 'succeeded', { sent: 0, note: 'Email outreach is paused, so answers are waiting.' }, null)).toBe('Email outreach is paused, so answers are waiting.');
+  });
+});

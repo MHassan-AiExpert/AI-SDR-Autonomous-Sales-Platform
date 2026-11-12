@@ -110,7 +110,7 @@ export function filtersToQuery(f: LeadFilters, overrides: Partial<LeadFilters> =
   return s ? `?${s}` : '';
 }
 
-export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies' };
+export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies', reply_send: 'Send answers' };
 
 export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach'] as const;
 export type JobType = (typeof JOB_TYPES)[number];
@@ -136,8 +136,16 @@ export function describeJobResult(type: string, status: string, result: unknown,
     if (!n && !num(r.failed)) return 'No new qualified leads to write to.';
     return `${plural(n, 'email sequence')} written${r.waiting_for_approval === true ? ', waiting for approval' : ' and approved'}${num(r.failed) ? `; ${num(r.failed)} could not be written and will be retried` : ''}.`;
   }
+  if (type === 'reply_send') {
+    if (typeof r.note === 'string') return r.note;
+    const parts = [`${plural(num(r.sent), 'answer')} sent`];
+    if (num(r.failed)) parts.push(`${num(r.failed)} could not be sent`);
+    if (num(r.skipped)) parts.push(`${num(r.skipped)} skipped because the lead opted out or the thread is unknown`);
+    return `${parts.join('; ')}.${typeof r.error === 'string' ? ` ${r.error}` : ''}`;
+  }
   if (type === 'reply_handling') {
     const parts: string[] = [];
+    if (num(r.auto_answers)) parts.push(`${plural(num(r.auto_answers), 'answer')} approved automatically`);
     if (num(r.replies)) parts.push(`${plural(num(r.replies), 'reply', 'replies')} read: ${num(r.hot)} need${num(r.hot) === 1 ? 's' : ''} you, ${num(r.unsubscribed)} unsubscribed`);
     if (num(r.bounced)) parts.push(plural(num(r.bounced), 'bounce'));
     if (num(r.sent)) parts.push(`${plural(num(r.sent), 'email')} sent`);

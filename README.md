@@ -383,6 +383,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F07](reports/F07-research-scoring/feature-report.md) | AI research briefs, explainable lead scores, outreach threshold and lead profiles | 38 passed |
 | [F08](reports/F08-email-outreach/feature-report.md) | AI-written personal email sequences, approval review and Instantly sending | 47 passed |
 | [F09](reports/F09-reply-handling/feature-report.md) | AI reply handling, opt-out and bounce suppression, Slack alerts and reply inbox | 43 passed |
+| [F10](reports/F10-answers-booking/feature-report.md) | AI answers in the email thread, Calendly booking links and meetings | 38 passed |
 
 ---
 

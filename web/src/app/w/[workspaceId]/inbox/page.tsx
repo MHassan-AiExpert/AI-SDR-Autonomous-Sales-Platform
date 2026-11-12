@@ -2,14 +2,15 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ActionForm, SubmitButton } from '@/components/action-form';
 import { requireWorkspace } from '@/lib/session';
-import { NEEDS_ANSWER, REPLY_CLASSES, REPLY_LABELS, parseInboxFilter, replyBadge, safeConversationUrl, type ReplyClass } from '@/lib/replies';
-import { markReplyHandled } from '../actions';
+import { ANSWER_LABELS, NEEDS_ANSWER, REPLY_CLASSES, REPLY_LABELS, parseInboxFilter, replyBadge, safeConversationUrl, type ReplyClass } from '@/lib/replies';
+import { markReplyHandled, saveAnswer } from '../actions';
 
 export const metadata: Metadata = { title: 'Inbox' };
 
 type Row = {
   id: string; lead_id: string; body: string; subject: string | null; classification: ReplyClass | null; confidence: number | null;
   summary: string | null; suggested_response: string | null; conversation_url: string | null; handled_at: string | null; created_at: string;
+  answer: string | null; answer_status: string; answer_error: string | null; booking_url: string | null;
   leads: { full_name: string | null; email: string | null; stage: string; companies: { name: string } | null } | null;
 };
 
@@ -21,7 +22,7 @@ export default async function InboxPage({ params, searchParams }: { params: Prom
   const canAct = workspace.role !== 'viewer';
 
   let q = supabase.from('replies')
-    .select('id, lead_id, body, subject, classification, confidence, summary, suggested_response, conversation_url, handled_at, created_at, leads(full_name, email, stage, companies(name))')
+    .select('id, lead_id, body, subject, classification, confidence, summary, suggested_response, conversation_url, handled_at, created_at, answer, answer_status, answer_error, booking_url, leads(full_name, email, stage, companies(name))')
     .eq('workspace_id', workspace.id);
   if (f.view === 'open') q = q.is('handled_at', null);
   if (f.view === 'handled') q = q.not('handled_at', 'is', null);
@@ -60,11 +61,25 @@ export default async function InboxPage({ params, searchParams }: { params: Prom
             </div>
             {r.summary ? <p><strong>{r.summary}</strong></p> : null}
             <blockquote className="pre">{r.body}</blockquote>
-            {r.suggested_response ? (
-              <details>
-                <summary>Suggested reply</summary>
-                <p className="pre">{r.suggested_response}</p>
-              </details>
+            {r.answer_status !== 'none' || r.suggested_response ? (
+              <div className="stack">
+                <div className="spread">
+                  <strong>Answer</strong>
+                  <span className={r.answer_status === 'sent' ? 'badge badge-ok' : r.answer_status === 'failed' ? 'badge badge-error' : 'badge badge-warn'}>{ANSWER_LABELS[r.answer_status] ?? r.answer_status}</span>
+                </div>
+                {r.answer_status === 'failed' && r.answer_error ? <p className="form-message form-error">{r.answer_error}</p> : null}
+                {canAct && ['none', 'draft', 'failed', 'approved'].includes(r.answer_status) ? (
+                  <ActionForm action={saveAnswer} className="stack">
+                    <input type="hidden" name="workspace_id" value={workspace.id} />
+                    <input type="hidden" name="reply_id" value={r.id} />
+                    <label className="field"><span className="sr-only">Answer</span><textarea name="answer" rows={6} maxLength={3000} defaultValue={r.answer ?? r.suggested_response ?? ''} /></label>
+                    <div className="row">
+                      <button className="btn btn-primary" type="submit" name="decision" value="send">Approve and send</button>
+                      <button className="btn btn-secondary" type="submit" name="decision" value="save">Save draft</button>
+                    </div>
+                  </ActionForm>
+                ) : <p className="pre">{r.answer ?? r.suggested_response}</p>}
+              </div>
             ) : null}
             <div className="row">
               {url ? <a className="btn btn-secondary" href={url} target="_blank" rel="noopener noreferrer">Answer in Instantly</a> : null}

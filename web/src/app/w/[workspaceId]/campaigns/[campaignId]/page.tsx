@@ -6,7 +6,7 @@ import { canManageSettings } from '@/lib/roles';
 import { requireWorkspace } from '@/lib/session';
 import { uuidSchema } from '@/lib/validation';
 import { JOB_LABELS, JOB_STATUS_LABELS, PLAN_SOURCE_TOOLS, SOURCE_LABELS, describeJobResult, describeSourcePlan } from '@/lib/campaigns';
-import { queueAgentJob, setCampaignStatus, setScoreThreshold } from '../actions';
+import { queueAgentJob, saveReplySettings, setCampaignStatus, setScoreThreshold } from '../actions';
 import { OutreachSection, type OutreachCampaign } from './outreach-section';
 
 export const metadata: Metadata = { title: 'Campaign' };
@@ -21,7 +21,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
 
   const { data: campaign } = await supabase
     .from('campaigns')
-    .select('id, name, niche, offer, status, target_areas, daily_lead_limit, score_threshold, icp, source_plan, created_at, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start, send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state')
+    .select('id, name, niche, offer, status, target_areas, daily_lead_limit, score_threshold, icp, source_plan, created_at, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start, send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state, auto_answer, booking_event_type')
     .eq('workspace_id', workspace.id)
     .eq('id', campaignId)
     .maybeSingle();
@@ -115,6 +115,26 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
         emailChannelOn={workspace.enabled_channels?.email !== false}
         domainsReady={checklist.sending_domains === true && checklist.mailbox_warmup === true}
       />
+
+      <section className="card stack" aria-labelledby="answers">
+        <h2 id="answers">Replies and booking</h2>
+        <p className="muted">The reply agent drafts an answer for interested prospects, questions, objections and referrals, with a single-use Calendly link when Calendly is connected. In autopilot, confident answers to interested prospects, questions and referrals are sent on their own; objections always wait for a person.</p>
+        {manage ? (
+          <ActionForm action={saveReplySettings} className="stack">
+            <input type="hidden" name="workspace_id" value={workspace.id} />
+            <input type="hidden" name="campaign_id" value={campaign.id} />
+            <label className="choice">
+              <input type="checkbox" name="auto_answer" defaultChecked={campaign.auto_answer} />
+              <span><strong>Send confident answers automatically in autopilot</strong></span>
+            </label>
+            <label className="field">
+              <span>Calendly event type for booking links (optional, the first active one is used when empty)</span>
+              <input name="booking_event_type" type="url" placeholder="https://api.calendly.com/event_types/ABC123" defaultValue={campaign.booking_event_type ?? ''} />
+            </label>
+            <SubmitButton variant="secondary">Save reply settings</SubmitButton>
+          </ActionForm>
+        ) : <p className="muted">Automatic answers: {campaign.auto_answer ? 'on' : 'off'}.</p>}
+      </section>
 
       <section className="card stack" aria-labelledby="threshold">
         <h2 id="threshold">Outreach threshold</h2>

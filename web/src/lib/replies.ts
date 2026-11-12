@@ -34,3 +34,14 @@ export function parseInboxFilter(params: Record<string, string | string[] | unde
 export function safeConversationUrl(url: string | null): string | null {
   return url && /^https:\/\/([a-z0-9-]+\.)*instantly\.ai\//.test(url) ? url : null;
 }
+
+export const ANSWER_LABELS: Record<string, string> = {
+  none: 'No answer', draft: 'Draft', approved: 'Waiting to send', sending: 'Sending', sent: 'Sent', failed: 'Not sent',
+};
+
+/** Only https meeting links are shown as links. */
+export function safeMeetingUrl(url: string | null): string | null {
+  return url && /^https:\/\/[^\s]+$/.test(url) ? url : null;
+}
+
+export const BOOKING_EVENT_TYPE = /^https:\/\/api\.calendly\.com\/event_types\/[A-Za-z0-9-]+$/;

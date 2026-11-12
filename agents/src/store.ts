@@ -23,7 +23,7 @@ export type Job = {
   id: string;
   workspace_id: string;
   campaign_id: string;
-  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling';
+  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send';
   attempts: number;
   correlation_id: string;
 };
@@ -54,6 +54,8 @@ export type Campaign = {
   follow_up_delay_days: number;
   instantly_campaign_id: string | null;
   instantly_state: 'active' | 'paused' | null;
+  auto_answer: boolean;
+  booking_event_type: string | null;
 };
 
 export class Store {
@@ -74,7 +76,8 @@ export class Store {
     const rows = await this.sql`
       select id, workspace_id, name, niche, offer, target_areas, daily_lead_limit, score_threshold, icp, source_plan,
              status, mode, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start,
-             send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state
+             send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state,
+             auto_answer, booking_event_type
       from campaigns where workspace_id = ${workspaceId}::uuid and id = ${campaignId}::uuid`;
     if (!rows.length) return null;
     const c = rows[0] as unknown as Campaign;
@@ -239,7 +242,7 @@ export class Store {
     return Number(rows[0].n);
   }
 
-  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling'): Promise<boolean> {
+  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send'): Promise<boolean> {
     const rows = await this.sql`select agent_job_enqueue(${workspaceId}::uuid, ${campaignId}::uuid, ${type}) as ok`;
     return rows[0].ok === true;
   }
@@ -476,10 +479,10 @@ export class Store {
     return rows[0]?.id ?? null;
   }
 
-  async insertInboundEvent(workspaceId: string, campaignId: string | null, type: string, leadEmail: string | null, payload: Record<string, unknown>, dedupe: string, status: 'received' | 'ignored'): Promise<string | null> {
+  async insertInboundEvent(workspaceId: string, campaignId: string | null, type: string, leadEmail: string | null, payload: Record<string, unknown>, dedupe: string, status: 'received' | 'ignored', provider: 'instantly' | 'calendly' = 'instantly'): Promise<string | null> {
     const rows = await this.sql`
       insert into inbound_events (workspace_id, campaign_id, provider, event_type, lead_email, payload, dedupe_key, status, processed_at)
-      values (${workspaceId}::uuid, ${campaignId}, 'instantly', ${type}, ${leadEmail}, ${this.sql.json(payload as postgres.JSONValue)}, ${dedupe}, ${status},
+      values (${workspaceId}::uuid, ${campaignId}, ${provider}, ${type}, ${leadEmail}, ${this.sql.json(payload as postgres.JSONValue)}, ${dedupe}, ${status},
               ${status === 'ignored' ? new Date() : null})
       on conflict (workspace_id, provider, dedupe_key) do nothing
       returning id`;
@@ -489,7 +492,7 @@ export class Store {
   async pendingEvents(workspaceId: string, campaignId: string, limit: number): Promise<InboundEvent[]> {
     return (await this.sql`
       select id, event_type, lead_email, payload from inbound_events
-      where workspace_id = ${workspaceId}::uuid and campaign_id = ${campaignId}::uuid and status = 'received'
+      where workspace_id = ${workspaceId}::uuid and campaign_id = ${campaignId}::uuid and status = 'received' and provider = 'instantly'
       order by received_at, id limit ${limit}`) as unknown as InboundEvent[];
   }
 
@@ -578,12 +581,15 @@ export class Store {
   async saveReply(workspaceId: string, campaignId: string, leadId: string, eventId: string, r: {
     body: string; subject: string | null; classification: string; confidence: number; summary: string;
     suggested: string | null; url: string | null; by: 'ai' | null;
+    answer?: string | null; answerStatus?: 'none' | 'draft' | 'approved'; bookingUrl?: string | null; replyTo?: string | null; account?: string | null;
   }) {
     await this.sql.begin(async (tx) => {
       const rows = await tx`
-        insert into replies (workspace_id, lead_id, campaign_id, inbound_event_id, channel, body, subject, classification, confidence, summary, suggested_response, conversation_url)
+        insert into replies (workspace_id, lead_id, campaign_id, inbound_event_id, channel, body, subject, classification, confidence, summary,
+                             suggested_response, conversation_url, answer, answer_status, booking_url, provider_email_id, email_account)
         values (${workspaceId}::uuid, ${leadId}::uuid, ${campaignId}::uuid, ${eventId}::uuid, 'email', ${r.body}, ${r.subject}, ${r.classification},
-                ${Math.round(r.confidence * 1000) / 1000}, ${r.summary}, ${r.suggested}, ${r.url})
+                ${Math.round(r.confidence * 1000) / 1000}, ${r.summary}, ${r.suggested}, ${r.url}, ${r.answer ?? null}, ${r.answerStatus ?? 'none'},
+                ${r.bookingUrl ?? null}, ${r.replyTo ?? null}, ${r.account ?? null})
         on conflict (inbound_event_id) where inbound_event_id is not null do nothing
         returning id`;
       if (!rows.length) return;
@@ -597,6 +603,109 @@ export class Store {
     await this.sql`
       insert into follow_ups (workspace_id, lead_id, channel, due_at)
       values (${workspaceId}::uuid, ${leadId}::uuid, 'email', now() + make_interval(days => ${days}))`;
+  }
+
+  // ---------------------------------------------------------------- answers and meetings
+
+  async approvedAnswers(workspaceId: string, campaignId: string, limit: number) {
+    return (await this.sql`
+      select r.id, r.lead_id, r.answer, r.subject, r.provider_email_id, r.email_account, l.stage,
+             app.is_suppressed(l.workspace_id, l.email, l.phone) as suppressed,
+             case when l.stage in ('new', 'contacted') then 'engaged' else l.stage end as lead_stage_after
+      from replies r join leads l on l.workspace_id = r.workspace_id and l.id = r.lead_id
+      where r.workspace_id = ${workspaceId}::uuid and r.campaign_id = ${campaignId}::uuid and r.answer_status = 'approved'
+      order by r.created_at limit ${limit}`) as unknown as {
+        id: string; lead_id: string; answer: string; subject: string | null; provider_email_id: string | null; email_account: string | null;
+        stage: string; suppressed: boolean; lead_stage_after: string;
+      }[];
+  }
+
+  /** Moves an answer to "sending" only if nobody else did; protects against double sends. */
+  async claimAnswer(workspaceId: string, id: string): Promise<boolean> {
+    const rows = await this.sql`update replies set answer_status = 'sending' where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid and answer_status = 'approved' returning id`;
+    return rows.length === 1;
+  }
+
+  async setAnswerStatus(workspaceId: string, id: string, status: 'failed', error: string) {
+    await this.sql`update replies set answer_status = ${status}, answer_error = ${error} where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid`;
+  }
+
+  async answerSent(workspaceId: string, id: string, leadId: string, stage: string) {
+    await this.sql.begin(async (tx) => {
+      await tx`update replies set answer_status = 'sent', answer_error = null, answered_at = now(), handled_at = coalesce(handled_at, now()), handled_by = coalesce(handled_by, 'ai') where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid`;
+      await tx`update leads set stage = ${stage}, stage_changed_at = now(), updated_at = now() where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid and stage <> ${stage}`;
+      await tx`insert into activities (workspace_id, lead_id, type, channel, summary, actor) values (${workspaceId}::uuid, ${leadId}::uuid, 'email', 'email', 'Answered the reply in the same email thread', 'ai')`;
+    });
+  }
+
+  async webhookToken(workspaceId: string): Promise<string | null> {
+    const rows = await this.sql`select webhook_token from workspaces where id = ${workspaceId}::uuid`;
+    return rows[0]?.webhook_token ?? null;
+  }
+
+  async calendlySubscription(workspaceId: string): Promise<{ user_uri: string; signing_key: string } | null> {
+    const rows = await this.sql`select user_uri, signing_key from calendly_subscriptions where workspace_id = ${workspaceId}::uuid`;
+    return (rows[0] ?? null) as { user_uri: string; signing_key: string } | null;
+  }
+
+  async saveCalendlySubscription(workspaceId: string, uri: string, user: string, org: string, key: string) {
+    await this.sql`
+      insert into calendly_subscriptions (workspace_id, subscription_uri, user_uri, organization_uri, signing_key)
+      values (${workspaceId}::uuid, ${uri}, ${user}, ${org}, ${key})
+      on conflict (workspace_id) do update set subscription_uri = excluded.subscription_uri, user_uri = excluded.user_uri,
+        organization_uri = excluded.organization_uri, signing_key = excluded.signing_key`;
+  }
+
+  async leadById(workspaceId: string, id: string) {
+    const rows = await this.sql`
+      select l.id, l.email, l.full_name, l.stage, c.name as company_name
+      from leads l left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      where l.workspace_id = ${workspaceId}::uuid and l.id = ${id}::uuid`;
+    return (rows[0] ?? null) as { id: string; email: string; full_name: string | null; stage: string; company_name: string | null } | null;
+  }
+
+  /** Records a booking once; returns the meeting id when it is new. */
+  async saveMeeting(workspaceId: string, leadId: string, m: {
+    externalId: string; startsAt: string; endsAt: string | null; eventName: string | null; inviteeName: string | null;
+    inviteeEmail: string | null; joinUrl: string | null; cancelUrl: string | null; rescheduleUrl: string | null;
+  }): Promise<string | null> {
+    return this.sql.begin(async (tx) => {
+      const rows = await tx`
+        insert into meetings (workspace_id, lead_id, campaign_id, starts_at, ends_at, zoom_url, booked_via, run_by, status, provider, external_id,
+                              event_name, invitee_name, invitee_email, cancel_url, reschedule_url)
+        select ${workspaceId}::uuid, l.id, l.campaign_id, ${m.startsAt}::timestamptz, ${m.endsAt}::timestamptz, ${m.joinUrl}, 'calendly',
+               case when w.ai_closer_enabled then 'ai_closer' else 'human' end, 'scheduled', 'calendly', ${m.externalId},
+               ${m.eventName}, ${m.inviteeName}, ${m.inviteeEmail}, ${m.cancelUrl}, ${m.rescheduleUrl}
+        from leads l join workspaces w on w.id = l.workspace_id
+        where l.workspace_id = ${workspaceId}::uuid and l.id = ${leadId}::uuid
+        on conflict (workspace_id, provider, external_id) where external_id is not null do nothing
+        returning id`;
+      if (!rows.length) return null;
+      await tx`
+        update leads set stage = 'meeting_booked', stage_changed_at = now(), updated_at = now()
+        where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid and stage not in ('meeting_booked', 'won', 'do_not_contact')`;
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'meeting', 'email', ${`Meeting booked for ${new Date(m.startsAt).toUTCString()}`}, 'system', 'meetings', ${rows[0].id}::uuid)`;
+      return rows[0].id as string;
+    });
+  }
+
+  async cancelMeeting(workspaceId: string, externalId: string, leadId: string) {
+    await this.sql.begin(async (tx) => {
+      const rows = await tx`
+        update meetings set status = 'canceled', updated_at = now()
+        where workspace_id = ${workspaceId}::uuid and provider = 'calendly' and external_id = ${externalId} and status = 'scheduled' returning id`;
+      if (!rows.length) return;
+      // Back to interested unless another meeting is still booked
+      await tx`
+        update leads set stage = 'interested', stage_changed_at = now(), updated_at = now()
+        where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid and stage = 'meeting_booked'
+          and not exists (select 1 from meetings m where m.workspace_id = ${workspaceId}::uuid and m.lead_id = ${leadId}::uuid and m.status = 'scheduled')`;
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'meeting', 'email', 'Meeting cancelled by the prospect', 'system', 'meetings', ${rows[0].id}::uuid)`;
+    });
   }
 
   async slackChannel(workspaceId: string): Promise<string | null> {

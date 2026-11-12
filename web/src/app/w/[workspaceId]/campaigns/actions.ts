@@ -9,6 +9,7 @@ import { requireUser } from '@/lib/session';
 import { JOB_TYPES, parseCampaignForm, scoreThreshold, type JobType } from '@/lib/campaigns';
 import { firstError, uuidSchema } from '@/lib/validation';
 import { parseEmailSettings, outreachReadiness } from '@/lib/outreach';
+import { BOOKING_EVENT_TYPE } from '@/lib/replies';
 
 const NO_PERMISSION = 'Only owners and admins can manage campaigns.';
 
@@ -209,4 +210,20 @@ export async function approveAllDrafts(_prev: FormState, form: FormData): Promis
   if (error) return { error: friendlyDbError(error) };
   revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}/emails`);
   return { notice: data?.length ? `${data.length} emails approved.` : 'There are no drafts waiting for approval.' };
+}
+
+export async function saveReplySettings(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  const eventType = String(form.get('booking_event_type') ?? '').trim();
+  if (eventType && !BOOKING_EVENT_TYPE.test(eventType)) return { error: 'Use the event type address from Calendly, like https://api.calendly.com/event_types/ABC123, or leave it empty.' };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('campaigns')
+    .update({ auto_answer: form.get('auto_answer') === 'on', booking_event_type: eventType || null, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data).eq('id', campaignId.data).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
+  return { notice: 'Reply settings saved.' };
 }

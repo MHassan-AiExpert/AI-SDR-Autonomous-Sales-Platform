@@ -21,5 +21,6 @@ Every feature of the platform ships with three documents:
 | [F07](F07-research-scoring/feature-report.md) | AI research and lead scoring: company briefs, explainable 0-100 scores, outreach threshold, lead profile with timeline | M4, M15, M16, Section 10 | 38 passed + 2 live checks |
 | [F08](F08-email-outreach/feature-report.md) | AI copywriting and email outreach: personal sequences, approval review, Instantly sending within limits, pause propagation | M1, M5, M6, M19, M21 | 47 passed + 2 live checks |
 | [F09](F09-reply-handling/feature-report.md) | Inbound events and AI reply handling: signed per-workspace webhooks, nine reply types, opt-out and bounce suppression, Slack alerts, inbox | M3, M7, M11, M15 | 43 passed + 2 live checks |
+| [F10](F10-answers-booking/feature-report.md) | AI answers and meeting booking: in-thread answers with approval, single-use Calendly links, signed booking notifications, meetings | M1, M7, M8, M11, M21 | 38 passed + 2 live checks |
 
 Run the infrastructure and database tests with `npm test`, the agent service tests with `cd agents && npm test`, and the web app tests with `cd web && npm test`.

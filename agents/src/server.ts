@@ -7,6 +7,7 @@ import type { Deps } from './jobs.ts';
 import { runQueuedJobs } from './jobs.ts';
 import { log } from './log.ts';
 import { ingestInstantlyEvent } from './webhooks.ts';
+import { handleCalendlyEvent } from './booking.ts';
 
 const MAX_SKEW_SECONDS = 300;
 
@@ -86,6 +87,27 @@ export function createAgentServer(deps: Deps, options: ServerOptions): Server {
         const result = await ingestInstantlyEvent(deps.store, parsed.token, parsed.event);
         // Unknown addresses get the same answer as a bad signature, so tokens cannot be probed
         if (result.status === 'unknown_workspace') return send(404, { error: 'Not found' });
+        return send(200, { status: result.status });
+      }
+      if (req.method === 'POST' && req.url === '/webhooks/calendly') {
+        let body: string;
+        try {
+          body = await readBody(req, 256_000);
+        } catch {
+          return send(413, { error: 'Request too large' });
+        }
+        if (!verifySignature(options.hmacSecret, header(req, 'x-timestamp'), header(req, 'x-signature'), body)) return send(401, { error: 'Invalid signature' });
+        let parsed: { token?: unknown; raw?: unknown; signature?: unknown };
+        try {
+          parsed = JSON.parse(body);
+        } catch {
+          return send(400, { error: 'Invalid JSON' });
+        }
+        const result = await handleCalendlyEvent(
+          { store: deps.store, fetchImpl: deps.fetchImpl, appUrl: deps.appUrl, webhookBaseUrl: deps.webhookBaseUrl },
+          parsed.token, parsed.raw, parsed.signature);
+        if (result.status === 'unknown_workspace') return send(404, { error: 'Not found' });
+        if (result.status === 'bad_signature') return send(401, { error: 'Invalid Calendly signature' });
         return send(200, { status: result.status });
       }
       return send(404, { error: 'Not found' });

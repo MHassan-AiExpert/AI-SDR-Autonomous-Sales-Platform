@@ -126,3 +126,23 @@ export async function markReplyHandled(_prev: FormState, form: FormData): Promis
   revalidatePath(`/w/${workspaceId}/inbox`);
   return { notice: reopen ? 'Moved back to the inbox.' : 'Marked as handled.' };
 }
+
+export async function saveAnswer(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  const replyId = uuidSchema.safeParse(form.get('reply_id'));
+  const decision = form.get('decision');
+  const answer = String(form.get('answer') ?? '').trim();
+  if (!workspaceId || !replyId.success) return { error: 'Reply not found.' };
+  if (decision !== 'send' && decision !== 'save') return { error: 'Unknown action.' };
+  if (answer.length < 10) return { error: 'Write the answer first.' };
+  if (answer.length > 3000) return { error: 'The answer is too long.' };
+  if (/<[a-z!/]|\{\{|\}\}/i.test(answer)) return { error: 'Answers are plain text: remove HTML and {{ }} placeholders.' };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('replies')
+    .update({ answer, answer_status: decision === 'send' ? 'approved' : 'draft' })
+    .eq('workspace_id', workspaceId).eq('id', replyId.data).select('id');
+  if (error) return { error: error.code === '23514' && error.message ? error.message : friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${workspaceId}/inbox`);
+  return { notice: decision === 'send' ? 'Approved. It is sent in the same email thread within a minute.' : 'Draft saved.' };
+}

@@ -214,3 +214,17 @@ test('INF-22 the Instantly events workflow receives per-workspace webhooks and f
   assert.equal(wf.active, true);
   assert.equal(wf.settings.saveDataSuccessExecution, 'none');
 });
+
+test('INF-23 the Calendly events workflow forwards the raw signed body and Calendly signature', () => {
+  const wf = JSON.parse(readFileSync(new URL('infra/n8n/workflows/calendly-events.json', root), 'utf8'));
+  const hook = wf.nodes.find((n) => n.type === 'n8n-nodes-base.webhook').parameters;
+  assert.equal(hook.path, 'calendly/:token');
+  assert.equal(hook.options.rawBody, true);
+  const code = wf.nodes.find((n) => n.type === 'n8n-nodes-base.code').parameters.jsCode;
+  assert.match(code, /getBinaryDataBuffer\(i, 'data'\)/);
+  assert.match(code, /calendly-webhook-signature/);
+  assert.match(code, /createHmac\('sha256', \$env\.PLATFORM_HMAC_SECRET\)/);
+  const http = wf.nodes.find((n) => n.type === 'n8n-nodes-base.httpRequest').parameters;
+  assert.match(http.url, /\/webhooks\/calendly/);
+  assert.equal(services['agent-service'].environment.WEBHOOK_BASE_URL, '${N8N_PUBLIC_URL:-}');
+});

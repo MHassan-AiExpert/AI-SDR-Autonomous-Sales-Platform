@@ -172,6 +172,8 @@ services:
       SCHEDULE_HOURS: ${AGENT_SCHEDULE_HOURS:-24}
       # Web app address, used for links in Slack alerts
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
+      # Public HTTPS address of n8n, used to register booking notifications with Calendly
+      WEBHOOK_BASE_URL: ${N8N_PUBLIC_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-}
