@@ -5,6 +5,10 @@
 # workspace in parallel. Scale throughput by adding workers:
 #   docker compose up -d --scale n8n-worker=4
 #
+# The agent service runs the AI agents (campaign planning, lead sourcing).
+# n8n's scheduler calls it every minute with a signed request; it claims queued
+# jobs from Supabase. Scale it the same way: --scale agent-service=3
+#
 # Application data (workspaces, leads, deals) lives in Supabase and is managed
 # by the migrations in /supabase. The Postgres service below stores only n8n's
 # own state (workflows, executions).
@@ -45,6 +49,9 @@ x-n8n-env: &n8n-env
   SUPABASE_URL: ${SUPABASE_URL:-}
   SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
   PLATFORM_HMAC_SECRET: ${PLATFORM_HMAC_SECRET:?PLATFORM_HMAC_SECRET is required}
+  AGENT_SERVICE_URL: http://agent-service:8080
+  # Lets the scheduler workflow sign requests to the agent service
+  NODE_FUNCTION_ALLOW_BUILTIN: crypto
 
 services:
   n8n-postgres:
@@ -128,6 +135,29 @@ services:
       timeout: 5s
       retries: 10
       start_period: 40s
+    networks: [internal]
+
+  agent-service:
+    build: ../agents
+    image: ai-sdr/agents:0.5.0
+    restart: unless-stopped
+    environment:
+      # Supabase connection pooler (transaction mode) URL for the backend
+      DATABASE_URL: ${AGENT_DATABASE_URL:?AGENT_DATABASE_URL is required}
+      PLATFORM_HMAC_SECRET: ${PLATFORM_HMAC_SECRET:?PLATFORM_HMAC_SECRET is required}
+      PORT: "8080"
+      JOBS_PER_RUN: ${AGENT_JOBS_PER_RUN:-3}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+    deploy:
+      replicas: ${AGENT_SERVICE_REPLICAS:-1}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     networks: [internal]
 
 volumes:

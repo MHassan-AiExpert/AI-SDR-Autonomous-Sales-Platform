@@ -30,6 +30,8 @@ export default async function WorkspaceLayout({
       </header>
       <nav className="tabs" aria-label="Workspace">
         <Link href={base}>Overview</Link>
+        <Link href={`${base}/campaigns`}>Campaigns</Link>
+        <Link href={`${base}/leads`}>Leads</Link>
         <Link href={`${base}/setup`}>Setup</Link>
         <Link href={`${base}/members`}>Team</Link>
         <Link href={`${base}/settings`}>Settings</Link>

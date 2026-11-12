@@ -33,7 +33,8 @@ export async function proxy(request: NextRequest) {
   if (!signedIn && PROTECTED.some((p) => path.startsWith(p))) {
     const target = request.nextUrl.clone();
     target.pathname = '/login';
-    target.search = `?next=${encodeURIComponent(path)}`;
+    // Keep the query too, so a shared filtered link (for example a lead list) survives sign-in
+    target.search = `?next=${encodeURIComponent(path + request.nextUrl.search)}`;
     return NextResponse.redirect(target);
   }
   if (signedIn && AUTH_PAGES.includes(path)) {

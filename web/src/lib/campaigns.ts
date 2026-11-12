@@ -1,0 +1,143 @@
+// Campaign and lead helpers shared by the campaign and lead screens.
+
+import { z } from 'zod';
+
+export const LEAD_SOURCES = ['apollo', 'google_maps', 'instagram', 'llm_search', 'facebook', 'linkedin', 'tiktok', 'x', 'clay', 'csv', 'inbound_call', 'manual'] as const;
+export type LeadSource = (typeof LEAD_SOURCES)[number];
+
+export const SOURCE_LABELS: Record<LeadSource, string> = {
+  apollo: 'Apollo', google_maps: 'Google Maps', instagram: 'Instagram', llm_search: 'LLM search',
+  facebook: 'Facebook', linkedin: 'LinkedIn', tiktok: 'TikTok', x: 'X', clay: 'Clay', csv: 'CSV import',
+  inbound_call: 'Inbound call', manual: 'Added by hand',
+};
+
+export const LEAD_STAGES = ['new', 'contacted', 'engaged', 'interested', 'meeting_booked', 'won', 'lost', 'not_interested', 'do_not_contact'] as const;
+export type LeadStage = (typeof LEAD_STAGES)[number];
+
+export const STAGE_LABELS: Record<LeadStage, string> = {
+  new: 'New', contacted: 'Contacted', engaged: 'Engaged', interested: 'Interested', meeting_booked: 'Meeting booked',
+  won: 'Won', lost: 'Lost', not_interested: 'Not interested', do_not_contact: 'Do not contact',
+};
+
+/** The sources the lead sourcing agent can search, in plan order. */
+export const PLAN_SOURCES = ['apollo', 'google_maps', 'instagram', 'llm_search'] as const;
+export type PlanSource = (typeof PLAN_SOURCES)[number];
+
+export const PLAN_SOURCE_TOOLS: Record<PlanSource, string> = {
+  apollo: 'Apollo', google_maps: 'Apify', instagram: 'Apify', llm_search: 'OpenAI, Anthropic or Gemini',
+};
+
+const areaList = z
+  .string()
+  .max(2000, 'Target areas are too long')
+  .transform((s) => [...new Set(s.split(/[\n;]+/).map((a) => a.trim()).filter(Boolean))])
+  .pipe(z.array(z.string().max(120, 'Each target area must be at most 120 characters')).min(1, 'Add at least one target area, for example a country or city').max(10, 'Use at most 10 target areas'));
+
+export const campaignSchema = z.object({
+  name: z.string().trim().min(1, 'Give the campaign a name').max(160, 'Campaign name must be at most 160 characters'),
+  niche: z.string().trim().min(2, 'Describe the niche you sell to').max(200, 'Niche must be at most 200 characters'),
+  target_areas: areaList,
+  offer: z.string().trim().max(500, 'Offer must be at most 500 characters').transform((s) => s || null),
+  daily_lead_limit: z.coerce.number('Enter a daily lead limit').int('Use a whole number').min(1, 'Daily lead limit must be at least 1').max(1000, 'Daily lead limit must be at most 1000'),
+  find_leads_now: z.boolean(),
+});
+export type CampaignInput = z.infer<typeof campaignSchema>;
+
+export function parseCampaignForm(form: FormData) {
+  return campaignSchema.safeParse({
+    name: form.get('name') ?? '',
+    niche: form.get('niche') ?? '',
+    target_areas: form.get('target_areas') ?? '',
+    offer: form.get('offer') ?? '',
+    daily_lead_limit: form.get('daily_lead_limit') ?? '',
+    find_leads_now: form.get('find_leads_now') === 'on',
+  });
+}
+
+export const PAGE_SIZE = 50;
+
+export type LeadFilters = { source: LeadSource | null; stage: LeadStage | null; campaign: string | null; q: string; page: number };
+
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? '';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Reads lead list filters from the URL; anything unknown is ignored. */
+export function parseLeadFilters(params: Record<string, string | string[] | undefined>): LeadFilters {
+  const source = one(params.source);
+  const stage = one(params.stage);
+  const campaign = one(params.campaign);
+  const page = Number.parseInt(one(params.page), 10);
+  return {
+    source: (LEAD_SOURCES as readonly string[]).includes(source) ? (source as LeadSource) : null,
+    stage: (LEAD_STAGES as readonly string[]).includes(stage) ? (stage as LeadStage) : null,
+    campaign: UUID.test(campaign) ? campaign.toLowerCase() : null,
+    q: searchTerm(one(params.q)),
+    page: Number.isFinite(page) && page > 0 ? Math.min(page, 1000) : 1,
+  };
+}
+
+/**
+ * Makes a search term safe to place inside a PostgREST `or` filter:
+ * characters with meaning there (commas, parentheses, wildcards, quotes,
+ * backslashes) are replaced with spaces.
+ */
+export function searchTerm(raw: string): string {
+  return raw.replace(/[,()%*_\\"'.:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
+export function filtersToQuery(f: LeadFilters, overrides: Partial<LeadFilters> = {}): string {
+  const merged = { ...f, ...overrides };
+  const q = new URLSearchParams();
+  if (merged.source) q.set('source', merged.source);
+  if (merged.stage) q.set('stage', merged.stage);
+  if (merged.campaign) q.set('campaign', merged.campaign);
+  if (merged.q) q.set('q', merged.q);
+  if (merged.page > 1) q.set('page', String(merged.page));
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}
+
+export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads' };
+export const JOB_STATUS_LABELS: Record<string, string> = { queued: 'Queued', running: 'Running', succeeded: 'Done', failed: 'Failed' };
+
+type SourceStats = { found?: number; added?: number; duplicates?: number; suppressed?: number; without_contact?: number; error?: string };
+
+/** One line per job for the history list, built only from known fields. */
+export function describeJobResult(type: string, status: string, result: unknown, error: string | null): string {
+  if (status === 'failed') return error || 'The job failed.';
+  if (status === 'queued') return 'Waiting for the next agent run (about a minute).';
+  if (status === 'running') return 'The agent is working on it.';
+  const r = (result && typeof result === 'object' ? result : {}) as Record<string, unknown>;
+  if (type === 'campaign_plan') {
+    const sources = Array.isArray(r.enabled_sources) ? r.enabled_sources.filter((s): s is PlanSource => (PLAN_SOURCES as readonly string[]).includes(s)) : [];
+    return sources.length ? `Plan ready. Searching ${sources.map((s) => SOURCE_LABELS[s]).join(', ')}.` : 'Plan ready, but no lead source is connected yet.';
+  }
+  if (typeof r.note === 'string') return r.note;
+  const added = typeof r.added === 'number' ? r.added : 0;
+  const parts: string[] = [];
+  const sources = r.sources && typeof r.sources === 'object' ? (r.sources as Record<string, SourceStats>) : {};
+  for (const s of PLAN_SOURCES) {
+    const st = sources[s];
+    if (!st) continue;
+    parts.push(st.error ? `${SOURCE_LABELS[s]} failed: ${st.error}` : `${SOURCE_LABELS[s]} ${st.added ?? 0}`);
+  }
+  return `${added} new ${added === 1 ? 'lead' : 'leads'}${parts.length ? ` (${parts.join(', ')})` : ''}.`;
+}
+
+export type SourceRow = { source: PlanSource; enabled: boolean; detail: string };
+
+/** What the saved plan will search, for the campaign page. */
+export function describeSourcePlan(plan: unknown): SourceRow[] {
+  const p = (plan && typeof plan === 'object' ? plan : {}) as Record<string, Record<string, unknown> | undefined>;
+  const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  return PLAN_SOURCES.map((source) => {
+    const s = p[source] ?? {};
+    const enabled = s.enabled === true;
+    let detail = '';
+    if (source === 'apollo') detail = list(s.person_titles).join(', ');
+    if (source === 'google_maps') detail = `${list(s.search_terms).join(', ')}${list(s.locations).length ? ` in ${list(s.locations).join('; ')}` : ''}`;
+    if (source === 'instagram') detail = list(s.hashtags).map((h) => `#${h}`).join(' ');
+    if (source === 'llm_search') detail = list(s.queries).join(' · ');
+    return { source, enabled, detail: detail || '—' };
+  });
+}

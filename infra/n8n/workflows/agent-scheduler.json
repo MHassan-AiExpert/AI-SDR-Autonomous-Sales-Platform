@@ -1,0 +1,60 @@
+{
+  "name": "Agent scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 1 }] }
+      },
+      "id": "5f1c2a2e-1d1b-4c4e-9a51-0a1f6a0c0001",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Sign the run request so only this scheduler can start agent work.\nconst crypto = require('crypto');\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst body = JSON.stringify({ source: 'n8n-scheduler' });\nconst signature = crypto.createHmac('sha256', $env.PLATFORM_HMAC_SECRET).update(`${timestamp}.${body}`).digest('hex');\nreturn [{ json: { timestamp, body, signature } }];"
+      },
+      "id": "5f1c2a2e-1d1b-4c4e-9a51-0a1f6a0c0002",
+      "name": "Sign request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AGENT_SERVICE_URL }}/jobs/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-timestamp", "value": "={{ $json.timestamp }}" },
+            { "name": "x-signature", "value": "={{ $json.signature }}" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": { "timeout": 600000 }
+      },
+      "id": "5f1c2a2e-1d1b-4c4e-9a51-0a1f6a0c0003",
+      "name": "Run queued agent jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0]
+    }
+  ],
+  "connections": {
+    "Every minute": { "main": [[{ "node": "Sign request", "type": "main", "index": 0 }]] },
+    "Sign request": { "main": [[{ "node": "Run queued agent jobs", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "timezone": "UTC"
+  },
+  "active": false
+}

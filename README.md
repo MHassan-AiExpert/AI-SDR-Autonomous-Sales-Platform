@@ -38,7 +38,7 @@ flowchart TB
         A4["Channel controls<br/>on/off, autopilot"]
     end
 
-    subgraph ORCH["Orchestration layer: n8n agents and workflows"]
+    subgraph ORCH["Orchestration layer: n8n scheduler, agent service and workflows"]
         direction TB
         subgraph AGENTS["Agents and modules"]
             M1["AI setup agent<br/>builds ICP and plan"]
@@ -217,7 +217,7 @@ Every module, with its numbered functional requirements, is defined in the [Soft
 
 | Layer | Technology |
 | --- | --- |
-| Orchestration | n8n (self-hosted) |
+| Orchestration | n8n (self-hosted, queue mode) as scheduler; agent service in TypeScript on Node 22 with a Postgres job queue |
 | Web app | Next.js 16 (App Router, Server Actions), React 19, TypeScript, Zod, Supabase Auth |
 | Database and knowledge base | Supabase (PostgreSQL, row-level security, pgvector) |
 | LLMs | OpenAI, Anthropic, Gemini |
@@ -316,11 +316,15 @@ AI-SDR-Autonomous-Sales-Platform/
 ├── docs/
 │   └── SRS.md                   Full Software Requirements Specification (26 modules)
 ├── infra/
-│   ├── docker-compose.yml       n8n queue mode, Redis job queue, workers, PostgreSQL
+│   ├── docker-compose.yml       n8n queue mode, Redis job queue, workers, agent service
+│   ├── n8n/workflows/           Scheduler workflow that signs and triggers agent runs
 │   └── .env.example             Configuration template
+├── agents/                      Agent service: AI setup agent and lead-finder agents
+│   ├── src/                     LLM failover, source adapters, normalisation, job runner, HTTP API
+│   └── tests/                   Unit and end-to-end pipeline tests on the real schema
 ├── supabase/
 │   └── migrations/              Multi-tenant schema with row-level security
-├── web/                         Next.js web app: sign-in, workspaces, team, settings
+├── web/                         Next.js web app: sign-in, workspaces, setup, campaigns, leads
 │   ├── src/                     App Router pages, Server Actions, role and validation logic
 │   ├── tests/                   Unit tests
 │   └── e2e/                     Browser tests
@@ -343,15 +347,19 @@ npm install
 # 1. Run the test suite (infrastructure + database)
 npm test
 
-# 2. Start the orchestration stack
+# 2. Test the agent service
+cd agents && npm install && npm test && cd ..
+
+# 3. Start the orchestration stack and agent service
 cp infra/.env.example infra/.env        # replace every change-me value
 npm run infra:up                        # n8n on http://localhost:5678
+# then import infra/n8n/workflows/agent-scheduler.json in n8n and activate it
 
-# 3. Apply the database schema
+# 4. Apply the database schema
 npx supabase start
 npx supabase db reset
 
-# 4. Run the web app
+# 5. Run the web app
 cd web && npm install
 cp .env.example .env.local              # Supabase project URL and publishable key
 npm run dev                             # http://localhost:3000
@@ -369,6 +377,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F02](reports/F02-multi-tenant-database/feature-report.md) | Multi-tenant database with row-level security and four roles | 43 passed |
 | [F03](reports/F03-web-auth-workspaces/feature-report.md) | Web app: sign-in, workspaces, team roles, channel switches and kill switch | 47 passed |
 | [F04](reports/F04-onboarding-integrations/feature-report.md) | Guided onboarding: 16 tools tested before saving, credentials encrypted in Supabase Vault | 60 passed |
+| [F05](reports/F05-lead-sourcing/feature-report.md) | AI setup agent and lead sourcing across Apollo, Google Maps, Instagram and LLM search, with de-duplication, suppression and lead screens | 98 passed |
 
 ---
 

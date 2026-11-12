@@ -1,0 +1,82 @@
+// HTTP entry point. The scheduler (n8n) calls POST /jobs/run every minute,
+// signed with the shared HMAC secret. GET /health is for uptime monitors.
+
+import { createServer, type IncomingMessage, type Server } from 'node:http';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { Deps } from './jobs.ts';
+import { runQueuedJobs } from './jobs.ts';
+import { log } from './log.ts';
+
+const MAX_SKEW_SECONDS = 300;
+
+export function sign(secret: string, timestamp: string, body: string): string {
+  return createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
+}
+
+export function verifySignature(secret: string, timestamp: string | undefined, signature: string | undefined, body: string, now = Date.now()): boolean {
+  if (!timestamp || !signature || !/^\d{10}$/.test(timestamp) || !/^[0-9a-f]{64}$/.test(signature)) return false;
+  if (Math.abs(now / 1000 - Number(timestamp)) > MAX_SKEW_SECONDS) return false;
+  const expected = Buffer.from(sign(secret, timestamp, body), 'hex');
+  return timingSafeEqual(expected, Buffer.from(signature, 'hex'));
+}
+
+async function readBody(req: IncomingMessage, max = 16_384): Promise<string> {
+  let size = 0;
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > max) throw new Error('too large');
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+export type ServerOptions = { hmacSecret: string; jobsPerRun: number; healthCheck: () => Promise<void> };
+
+export function createAgentServer(deps: Deps, options: ServerOptions): Server {
+  let running = false;
+  return createServer(async (req, res) => {
+    const send = (status: number, body: unknown) => {
+      res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(body));
+    };
+    try {
+      if (req.method === 'GET' && req.url === '/health') {
+        try {
+          await options.healthCheck();
+          return send(200, { status: 'ok' });
+        } catch {
+          return send(503, { status: 'database unavailable' });
+        }
+      }
+      if (req.method === 'POST' && req.url === '/jobs/run') {
+        let body: string;
+        try {
+          body = await readBody(req);
+        } catch {
+          return send(413, { error: 'Request too large' });
+        }
+        const ok = verifySignature(options.hmacSecret, header(req, 'x-timestamp'), header(req, 'x-signature'), body);
+        if (!ok) return send(401, { error: 'Invalid signature' });
+        // One run at a time per process; the scheduler simply tries again next minute
+        if (running) return send(202, { status: 'busy' });
+        running = true;
+        try {
+          const jobs = await runQueuedJobs(deps, options.jobsPerRun);
+          return send(200, { status: 'ok', jobs });
+        } finally {
+          running = false;
+        }
+      }
+      return send(404, { error: 'Not found' });
+    } catch (err) {
+      log('error', 'request failed', { path: req.url, error: err instanceof Error ? err.message : 'unknown' });
+      return send(500, { error: 'Internal error' });
+    }
+  });
+}
+
+function header(req: IncomingMessage, name: string): string | undefined {
+  const v = req.headers[name];
+  return Array.isArray(v) ? v[0] : v;
+}

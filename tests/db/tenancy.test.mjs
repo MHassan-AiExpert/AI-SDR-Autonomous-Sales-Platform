@@ -5,7 +5,7 @@ import { createDatabase, seedTwoWorkspaces, asUser, asAnon, asService, insertLea
 let db, wsA, wsB, leadA;
 
 const TENANT_TABLES = [
-  'workspace_members', 'audit_log', 'campaigns', 'companies', 'leads', 'assets', 'activities',
+  'workspace_members', 'audit_log', 'agent_jobs', 'campaigns', 'companies', 'leads', 'assets', 'activities',
   'follow_ups', 'emails', 'calls', 'messages', 'replies', 'meetings', 'deals', 'suppressions',
   'integrations', 'playbooks', 'run_logs',
 ];
@@ -19,7 +19,7 @@ before(async () => {
 
 // ---------------------------------------------------------------- structure
 test('DB-01 migrations apply cleanly in order', () => {
-  assert.equal(migrationFiles().length, 5);
+  assert.equal(migrationFiles().length, 6);
 });
 
 test('DB-02 every public table has row-level security enabled', async () => {

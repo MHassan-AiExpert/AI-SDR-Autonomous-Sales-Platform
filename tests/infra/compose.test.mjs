@@ -9,8 +9,8 @@ const compose = parse(composeText, { merge: true });
 const envExample = readFileSync(new URL('infra/.env.example', root), 'utf8');
 const services = compose.services;
 
-test('INF-01 stack defines database, queue, main instance and workers', () => {
-  assert.deepEqual(Object.keys(services).sort(), ['n8n', 'n8n-postgres', 'n8n-worker', 'redis']);
+test('INF-01 stack defines database, queue, main instance, workers and the agent service', () => {
+  assert.deepEqual(Object.keys(services).sort(), ['agent-service', 'n8n', 'n8n-postgres', 'n8n-worker', 'redis']);
 });
 
 test('INF-02 every image is pinned to an exact version', () => {
@@ -64,7 +64,7 @@ test('INF-08 Redis requires a password, persists data and never evicts queued jo
 });
 
 test('INF-09 required secrets fail fast when missing and are never hard-coded', () => {
-  for (const key of ['N8N_DB_PASSWORD', 'REDIS_PASSWORD', 'N8N_ENCRYPTION_KEY', 'PLATFORM_HMAC_SECRET']) {
+  for (const key of ['N8N_DB_PASSWORD', 'REDIS_PASSWORD', 'N8N_ENCRYPTION_KEY', 'PLATFORM_HMAC_SECRET', 'AGENT_DATABASE_URL']) {
     assert.match(composeText, new RegExp(`\\$\\{${key}:\\?`), `${key} must use the required-variable syntax`);
   }
   const literalSecret = /^\s*[A-Z0-9_]*(PASSWORD|SECRET|ENCRYPTION_KEY|ROLE_KEY):\s*(?!\$\{)\S+/m;
@@ -97,7 +97,7 @@ test('INF-12 every variable used by the stack is documented in .env.example', ()
 });
 
 test('INF-13 .env.example ships placeholders only', () => {
-  for (const key of ['N8N_DB_PASSWORD', 'REDIS_PASSWORD', 'N8N_ENCRYPTION_KEY', 'PLATFORM_HMAC_SECRET']) {
+  for (const key of ['N8N_DB_PASSWORD', 'REDIS_PASSWORD', 'N8N_ENCRYPTION_KEY', 'PLATFORM_HMAC_SECRET', 'AGENT_DATABASE_URL']) {
     assert.match(envExample, new RegExp(`^${key}=change-me$`, 'm'));
   }
   assert.match(envExample, /^SUPABASE_SERVICE_ROLE_KEY=$/m);
@@ -107,4 +107,48 @@ test('INF-14 execution history is pruned and logs are structured JSON', () => {
   const env = services.n8n.environment;
   assert.equal(env.EXECUTIONS_DATA_PRUNE, 'true');
   assert.equal(env.N8N_LOG_FORMAT, 'json');
+});
+
+const workflow = JSON.parse(readFileSync(new URL('infra/n8n/workflows/agent-scheduler.json', root), 'utf8'));
+const dockerfile = readFileSync(new URL('agents/Dockerfile', root), 'utf8');
+
+test('INF-15 the agent service is built from /agents, stays internal and can scale', () => {
+  const svc = services['agent-service'];
+  assert.equal(svc.build, '../agents');
+  assert.equal(svc.ports, undefined);
+  assert.match(String(svc.deploy.replicas), /\$\{AGENT_SERVICE_REPLICAS:-\d+\}/);
+  assert.deepEqual(svc.networks, ['internal']);
+  assert.match(svc.healthcheck.test.join(' '), /127\.0\.0\.1:8080\/health/);
+});
+
+test('INF-16 the agent service shares the signing secret with n8n and n8n knows where it is', () => {
+  assert.equal(services['agent-service'].environment.PLATFORM_HMAC_SECRET, services.n8n.environment.PLATFORM_HMAC_SECRET);
+  for (const name of ['n8n', 'n8n-worker']) {
+    assert.equal(services[name].environment.AGENT_SERVICE_URL, 'http://agent-service:8080');
+    assert.equal(services[name].environment.NODE_FUNCTION_ALLOW_BUILTIN, 'crypto');
+  }
+});
+
+test('INF-17 the agent image is pinned, runs as a non-root user and has no build step', () => {
+  assert.match(dockerfile, /^FROM node:\d+\.\d+\.\d+-alpine$/m);
+  assert.match(dockerfile, /^USER node$/m);
+  assert.match(dockerfile, /npm ci --omit=dev/);
+  assert.match(dockerfile, /CMD \["node", "src\/main\.ts"\]/);
+});
+
+test('INF-18 the scheduler workflow signs a run request every minute', () => {
+  const byType = (t) => workflow.nodes.filter((n) => n.type === t);
+  const schedule = byType('n8n-nodes-base.scheduleTrigger')[0];
+  assert.deepEqual(schedule.parameters.rule.interval[0], { field: 'minutes', minutesInterval: 1 });
+  const code = byType('n8n-nodes-base.code')[0].parameters.jsCode;
+  assert.match(code, /require\('crypto'\)/);
+  assert.match(code, /createHmac\('sha256', \$env\.PLATFORM_HMAC_SECRET\)/);
+  assert.match(code, /`\$\{timestamp\}\.\$\{body\}`/);
+  const http = byType('n8n-nodes-base.httpRequest')[0].parameters;
+  assert.equal(http.method, 'POST');
+  assert.match(http.url, /\$env\.AGENT_SERVICE_URL.*\/jobs\/run/);
+  const headers = http.headerParameters.parameters.map((p) => p.name).sort();
+  assert.deepEqual(headers, ['content-type', 'x-signature', 'x-timestamp']);
+  assert.equal(workflow.settings.saveDataSuccessExecution, 'none');
+  assert.deepEqual(Object.keys(workflow.connections).sort(), ['Every minute', 'Sign request']);
 });
