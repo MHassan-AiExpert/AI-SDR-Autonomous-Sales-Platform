@@ -26,10 +26,12 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
     .maybeSingle();
   if (!campaign) notFound();
 
-  const [{ data: jobs }, { count: leadCount }] = await Promise.all([
+  const [{ data: jobs }, { count: leadCount }, { count: verified }, { count: awaiting }] = await Promise.all([
     supabase.from('agent_jobs').select('id, type, status, result, error, created_at, finished_at')
       .eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).order('created_at', { ascending: false }).limit(20),
     supabase.from('leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id),
+    supabase.from('leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).eq('verification_status', 'valid'),
+    supabase.from('companies').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).eq('enrichment_status', 'pending'),
   ]);
   const icp = (campaign.icp ?? {}) as Record<string, unknown>;
   const planned = typeof icp.summary === 'string';
@@ -46,6 +48,8 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
       </div>
       <dl className="stats">
         <div><dt>Leads found</dt><dd>{leadCount ?? 0}</dd></div>
+        <div><dt>Verified emails</dt><dd>{verified ?? 0}</dd></div>
+        <div><dt>Companies awaiting contacts</dt><dd>{awaiting ?? 0}</dd></div>
         <div><dt>Leads per day</dt><dd>{campaign.daily_lead_limit}</dd></div>
         <div><dt>Niche</dt><dd>{campaign.niche}</dd></div>
         <div><dt>Target areas</dt><dd>{list(campaign.target_areas).join('; ')}</dd></div>
@@ -55,6 +59,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
       {manage ? (
         <section className="card stack" aria-labelledby="agent">
           <h2 id="agent">Agents</h2>
+          <p className="muted">Active campaigns find new leads and verify them automatically once a day. Use these buttons to run an agent now.</p>
           {busy ? <p className="muted" role="status">An agent is working on this campaign. Refresh in a minute to see the result.</p> : null}
           <div className="row">
             <ActionForm action={queueAgentJob}>
@@ -62,6 +67,12 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
               <input type="hidden" name="campaign_id" value={campaign.id} />
               <input type="hidden" name="type" value="lead_sourcing" />
               <SubmitButton>Find leads now</SubmitButton>
+            </ActionForm>
+            <ActionForm action={queueAgentJob}>
+              <input type="hidden" name="workspace_id" value={workspace.id} />
+              <input type="hidden" name="campaign_id" value={campaign.id} />
+              <input type="hidden" name="type" value="enrichment" />
+              <SubmitButton variant="secondary">Enrich and verify</SubmitButton>
             </ActionForm>
             <ActionForm action={queueAgentJob}>
               <input type="hidden" name="workspace_id" value={workspace.id} />

@@ -56,7 +56,7 @@ export function parseCampaignForm(form: FormData) {
 
 export const PAGE_SIZE = 50;
 
-export type LeadFilters = { source: LeadSource | null; stage: LeadStage | null; campaign: string | null; q: string; page: number };
+export type LeadFilters = { source: LeadSource | null; stage: LeadStage | null; verification: VerificationStatus | null; campaign: string | null; q: string; page: number };
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? '';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -66,10 +66,12 @@ export function parseLeadFilters(params: Record<string, string | string[] | unde
   const source = one(params.source);
   const stage = one(params.stage);
   const campaign = one(params.campaign);
+  const verification = one(params.verification);
   const page = Number.parseInt(one(params.page), 10);
   return {
     source: (LEAD_SOURCES as readonly string[]).includes(source) ? (source as LeadSource) : null,
     stage: (LEAD_STAGES as readonly string[]).includes(stage) ? (stage as LeadStage) : null,
+    verification: (VERIFICATION_STATUSES as readonly string[]).includes(verification) ? (verification as VerificationStatus) : null,
     campaign: UUID.test(campaign) ? campaign.toLowerCase() : null,
     q: searchTerm(one(params.q)),
     page: Number.isFinite(page) && page > 0 ? Math.min(page, 1000) : 1,
@@ -90,6 +92,7 @@ export function filtersToQuery(f: LeadFilters, overrides: Partial<LeadFilters> =
   const q = new URLSearchParams();
   if (merged.source) q.set('source', merged.source);
   if (merged.stage) q.set('stage', merged.stage);
+  if (merged.verification) q.set('verification', merged.verification);
   if (merged.campaign) q.set('campaign', merged.campaign);
   if (merged.q) q.set('q', merged.q);
   if (merged.page > 1) q.set('page', String(merged.page));
@@ -97,7 +100,10 @@ export function filtersToQuery(f: LeadFilters, overrides: Partial<LeadFilters> =
   return s ? `?${s}` : '';
 }
 
-export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads' };
+export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify' };
+
+export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment'] as const;
+export type JobType = (typeof JOB_TYPES)[number];
 export const JOB_STATUS_LABELS: Record<string, string> = { queued: 'Queued', running: 'Running', succeeded: 'Done', failed: 'Failed' };
 
 type SourceStats = { found?: number; added?: number; duplicates?: number; suppressed?: number; without_contact?: number; error?: string };
@@ -112,6 +118,7 @@ export function describeJobResult(type: string, status: string, result: unknown,
     const sources = Array.isArray(r.enabled_sources) ? r.enabled_sources.filter((s): s is PlanSource => (PLAN_SOURCES as readonly string[]).includes(s)) : [];
     return sources.length ? `Plan ready. Searching ${sources.map((s) => SOURCE_LABELS[s]).join(', ')}.` : 'Plan ready, but no lead source is connected yet.';
   }
+  if (type === 'enrichment') return describeEnrichment(r);
   if (typeof r.note === 'string') return r.note;
   const added = typeof r.added === 'number' ? r.added : 0;
   const parts: string[] = [];
@@ -123,6 +130,31 @@ export function describeJobResult(type: string, status: string, result: unknown,
   }
   return `${added} new ${added === 1 ? 'lead' : 'leads'}${parts.length ? ` (${parts.join(', ')})` : ''}.`;
 }
+
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+const obj = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+function describeEnrichment(r: Record<string, unknown>): string {
+  const companies = obj(r.companies);
+  const emails = obj(r.emails);
+  const phones = obj(r.phones);
+  const parts: string[] = [];
+  if (num(companies.checked)) parts.push(`${plural(num(companies.leads_added), 'new contact')} from ${plural(num(companies.checked), 'company', 'companies')}`);
+  if (num(emails.checked)) parts.push(`${plural(num(emails.checked), 'email')} checked (${num(emails.valid)} valid, ${num(emails.invalid)} invalid, ${num(emails.catch_all) + num(emails.risky)} uncertain)`);
+  if (num(phones.checked)) parts.push(`${plural(num(phones.checked), 'phone')} checked (${num(phones.mobile)} mobile, ${num(phones.landline)} landline, ${num(phones.voip)} VoIP)`);
+  for (const e of [companies.error, emails.error, phones.error]) if (typeof e === 'string') parts.push(e);
+  const notes = Array.isArray(r.notes) ? r.notes.filter((n): n is string => typeof n === 'string') : [];
+  if (!parts.length && !notes.length) return 'Nothing new to enrich or verify.';
+  return [parts.join('; '), ...notes].filter(Boolean).join(' ');
+}
+
+export const VERIFICATION_STATUSES = ['unverified', 'valid', 'invalid', 'catch_all', 'risky'] as const;
+export type VerificationStatus = (typeof VERIFICATION_STATUSES)[number];
+export const VERIFICATION_LABELS: Record<VerificationStatus, string> = {
+  unverified: 'Not checked', valid: 'Verified', invalid: 'Invalid', catch_all: 'Catch-all', risky: 'Risky',
+};
+export const LINE_TYPE_LABELS: Record<string, string> = { mobile: 'Mobile', landline: 'Landline', voip: 'VoIP', unknown: 'Unknown type' };
 
 export type SourceRow = { source: PlanSource; enabled: boolean; detail: string };
 

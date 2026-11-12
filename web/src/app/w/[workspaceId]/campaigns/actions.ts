@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { friendlyDbError } from '@/lib/errors';
 import type { FormState } from '@/lib/form-state';
 import { requireUser } from '@/lib/session';
-import { parseCampaignForm } from '@/lib/campaigns';
+import { JOB_TYPES, parseCampaignForm, type JobType } from '@/lib/campaigns';
 import { firstError, uuidSchema } from '@/lib/validation';
 
 const NO_PERMISSION = 'Only owners and admins can manage campaigns.';
@@ -41,9 +41,9 @@ export async function createCampaign(_prev: FormState, form: FormData): Promise<
 export async function queueAgentJob(_prev: FormState, form: FormData): Promise<FormState> {
   const ws = uuidSchema.safeParse(form.get('workspace_id'));
   const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
-  const type = form.get('type');
+  const type = form.get('type') as JobType;
   if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
-  if (type !== 'campaign_plan' && type !== 'lead_sourcing') return { error: 'Unknown agent task.' };
+  if (!(JOB_TYPES as readonly string[]).includes(type)) return { error: 'Unknown agent task.' };
 
   const { supabase, user } = await requireUser();
   const { error } = await supabase
@@ -55,7 +55,12 @@ export async function queueAgentJob(_prev: FormState, form: FormData): Promise<F
   if (error) return { error: friendlyDbError(error) };
 
   revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
-  return { notice: type === 'campaign_plan' ? 'The setup agent will re-plan this campaign within a minute.' : 'The lead sourcing agent will start within a minute.' };
+  const notices: Record<JobType, string> = {
+    campaign_plan: 'The setup agent will re-plan this campaign within a minute.',
+    lead_sourcing: 'The lead sourcing agent will start within a minute.',
+    enrichment: 'The enrichment agent will find contacts and verify emails and phones within a minute.',
+  };
+  return { notice: notices[type] };
 }
 
 export async function setCampaignStatus(_prev: FormState, form: FormData): Promise<FormState> {

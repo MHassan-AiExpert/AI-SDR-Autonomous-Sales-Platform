@@ -379,6 +379,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F03](reports/F03-web-auth-workspaces/feature-report.md) | Web app: sign-in, workspaces, team roles, channel switches and kill switch | 47 passed |
 | [F04](reports/F04-onboarding-integrations/feature-report.md) | Guided onboarding: 16 tools tested before saving, credentials encrypted in Supabase Vault | 60 passed |
 | [F05](reports/F05-lead-sourcing/feature-report.md) | AI setup agent and lead sourcing across Apollo, Google Maps, Instagram and LLM search, with de-duplication, suppression and lead screens | 101 passed |
+| [F06](reports/F06-enrichment-verification/feature-report.md) | Enrichment and verification: decision makers, verified emails, phone line types, daily runs | 55 passed |
 
 ---
 

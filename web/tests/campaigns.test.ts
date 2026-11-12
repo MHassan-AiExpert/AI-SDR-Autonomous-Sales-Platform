@@ -34,9 +34,9 @@ describe('campaign form', () => {
 describe('lead filters', () => {
   test('CMP-04 known filters are kept and unknown values ignored', () => {
     expect(parseLeadFilters({ source: 'google_maps', stage: 'new', campaign: 'A7C1A3A0-0000-4000-8000-000000000001', q: 'smile', page: '3' }))
-      .toEqual({ source: 'google_maps', stage: 'new', campaign: 'a7c1a3a0-0000-4000-8000-000000000001', q: 'smile', page: 3 });
+      .toEqual({ source: 'google_maps', stage: 'new', verification: null, campaign: 'a7c1a3a0-0000-4000-8000-000000000001', q: 'smile', page: 3 });
     expect(parseLeadFilters({ source: 'myspace', stage: 'drop table', campaign: '1 or 1=1', page: '-2' }))
-      .toEqual({ source: null, stage: null, campaign: null, q: '', page: 1 });
+      .toEqual({ source: null, stage: null, verification: null, campaign: null, q: '', page: 1 });
     expect(parseLeadFilters({ source: ['apollo', 'x'] }).source).toBe('apollo');
   });
 
@@ -79,5 +79,24 @@ describe('job and plan summaries', () => {
       { source: 'llm_search', enabled: false, detail: '—' },
     ]);
     expect(describeSourcePlan(null).every((r) => !r.enabled)).toBe(true);
+  });
+});
+
+describe('enrichment summaries', () => {
+  test('CMP-09 an enrichment run is described step by step', () => {
+    expect(describeJobResult('enrichment', 'succeeded', {
+      companies: { checked: 4, leads_added: 2 }, emails: { checked: 5, valid: 2, invalid: 1, catch_all: 1, risky: 1 },
+      phones: { checked: 3, mobile: 1, landline: 1, voip: 0 }, notes: [],
+    }, null)).toBe('2 new contacts from 4 companies; 5 emails checked (2 valid, 1 invalid, 2 uncertain); 3 phones checked (1 mobile, 1 landline, 0 VoIP)');
+    expect(describeJobResult('enrichment', 'succeeded', { companies: {}, emails: { error: 'ZeroBounce reports the account is out of credits or needs a plan upgrade' }, phones: {}, notes: ['Connect Twilio to check phone line types before calls and SMS.'] }, null))
+      .toBe('ZeroBounce reports the account is out of credits or needs a plan upgrade Connect Twilio to check phone line types before calls and SMS.');
+    expect(describeJobResult('enrichment', 'succeeded', { companies: {}, emails: {}, phones: {}, notes: [] }, null)).toBe('Nothing new to enrich or verify.');
+  });
+
+  test('CMP-10 the email check filter is read and kept in links', () => {
+    const f = parseLeadFilters({ verification: 'valid', source: 'apollo' });
+    expect(f.verification).toBe('valid');
+    expect(filtersToQuery(f)).toBe('?source=apollo&verification=valid');
+    expect(parseLeadFilters({ verification: 'maybe' }).verification).toBeNull();
   });
 });

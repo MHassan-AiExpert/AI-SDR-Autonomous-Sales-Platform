@@ -10,8 +10,10 @@ import { sourceInstagram } from './sources/instagram.ts';
 import { sourceLlmSearch } from './sources/llmSearch.ts';
 import { SOURCE_LABELS, type Campaign, type Job, type Store } from './store.ts';
 import { log } from './log.ts';
+import { runEnrichment as enrich, type EnrichmentDeps } from './enrichment.ts';
+import type { Resolver } from './sources/website.ts';
 
-export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch };
+export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; scheduleHours?: number };
 
 export class JobError extends Error {}
 
@@ -179,10 +181,22 @@ async function runSource(deps: Deps, job: Job, source: SourceChannel, plan: Camp
   }
 }
 
-const HANDLERS = { campaign_plan: runCampaignPlan, lead_sourcing: runLeadSourcing } as const;
+export async function runEnrichment(deps: Deps, job: Job) {
+  const campaign = await deps.store.campaign(job.workspace_id, job.campaign_id);
+  if (!campaign) throw new JobError('The campaign no longer exists');
+  return enrich(deps as EnrichmentDeps, job, campaign);
+}
+
+const HANDLERS = { campaign_plan: runCampaignPlan, lead_sourcing: runLeadSourcing, enrichment: runEnrichment } as const;
 
 /** Claims and runs up to `limit` jobs. Each job's failure is recorded on that job only. */
 export async function runQueuedJobs(deps: Deps, limit: number) {
+  // Daily runs for every active campaign (SRS FR-2.6); 0 switches it off
+  const hours = deps.scheduleHours ?? 0;
+  if (hours > 0) {
+    const queued = await deps.store.enqueueDue(hours);
+    if (queued) log('info', 'scheduled daily jobs', { queued });
+  }
   const jobs = await deps.store.claimJobs(limit);
   const outcomes: { id: string; type: string; status: 'succeeded' | 'failed' }[] = [];
   for (const job of jobs) {
@@ -192,6 +206,8 @@ export async function runQueuedJobs(deps: Deps, limit: number) {
       const result = await HANDLERS[job.type](deps, job);
       await deps.store.finishJob(job.id, 'succeeded', result, null);
       await deps.store.runLogFinish(runLog, 'success', null);
+      // New leads go straight on to enrichment and verification
+      if (job.type === 'lead_sourcing') await deps.store.enqueue(job.workspace_id, job.campaign_id, 'enrichment').catch(() => false);
       outcomes.push({ id: job.id, type: job.type, status: 'succeeded' });
       log('info', 'job succeeded', { job: job.id, type: job.type, workspace_id: job.workspace_id, correlation_id: job.correlation_id, ms: Date.now() - started });
     } catch (err) {

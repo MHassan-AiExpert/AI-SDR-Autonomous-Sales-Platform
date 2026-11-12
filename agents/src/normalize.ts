@@ -71,3 +71,15 @@ export function cleanText(value: unknown, max = 200): string | undefined {
   const text = value.replace(/\s+/g, ' ').trim();
   return text ? text.slice(0, max) : undefined;
 }
+
+/**
+ * Tidies a person's name for copy and call scripts (SRS FR-3.5): names typed
+ * in all capitals or all lower case are title-cased; mixed case is kept.
+ */
+export function normalizePersonName(value: unknown): string | undefined {
+  const name = cleanText(value, 160);
+  if (!name) return undefined;
+  if (name !== name.toUpperCase() && name !== name.toLowerCase()) return name;
+  return name.toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, (_m, sep: string, ch: string) => sep + ch.toUpperCase())
+    .replace(/\bMc(\p{L})/gu, (_m, ch: string) => `Mc${ch.toUpperCase()}`);
+}

@@ -23,7 +23,7 @@ export type Job = {
   id: string;
   workspace_id: string;
   campaign_id: string;
-  type: 'campaign_plan' | 'lead_sourcing';
+  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment';
   attempts: number;
   correlation_id: string;
 };
@@ -141,6 +141,7 @@ export class Store {
     return this.sql.begin(async (tx) => {
       const companyIds = new Map<string, string>();
       const companyId = async (c: LeadCandidate): Promise<string> => {
+        if (c.companyId) return c.companyId;
         const key = c.company.domain ? `d:${c.company.domain}` : `n:${c.company.name.toLowerCase()}|${c.company.location ?? ''}`;
         const cached = companyIds.get(key);
         if (cached) return cached;
@@ -156,9 +157,11 @@ export class Store {
         let rows;
         if (c.company.domain) {
           rows = await tx`
-            insert into companies (workspace_id, domain, name, industry, size_band, location, google_rating, google_reviews, social)
+            insert into companies (workspace_id, domain, name, industry, size_band, location, google_rating, google_reviews, social,
+                                   campaign_id, source_channel)
             values (${workspaceId}::uuid, ${c.company.domain}, ${values.name}, ${values.industry}, ${values.size_band},
-                    ${values.location}, ${values.google_rating}, ${values.google_reviews}, ${values.social})
+                    ${values.location}, ${values.google_rating}, ${values.google_reviews}, ${values.social},
+                    ${campaign.id}::uuid, ${c.source})
             on conflict (workspace_id, domain) where domain is not null do update set
               industry = coalesce(companies.industry, excluded.industry),
               size_band = coalesce(companies.size_band, excluded.size_band),
@@ -166,6 +169,8 @@ export class Store {
               google_rating = coalesce(excluded.google_rating, companies.google_rating),
               google_reviews = coalesce(excluded.google_reviews, companies.google_reviews),
               social = companies.social || excluded.social,
+              campaign_id = coalesce(companies.campaign_id, excluded.campaign_id),
+              source_channel = coalesce(companies.source_channel, excluded.source_channel),
               updated_at = now()
             returning id`;
         } else {
@@ -174,9 +179,10 @@ export class Store {
               and lower(name) = lower(${values.name}) and coalesce(location, '') = ${values.location ?? ''} limit 1`;
           if (!rows.length) {
             rows = await tx`
-              insert into companies (workspace_id, name, industry, size_band, location, google_rating, google_reviews, social)
+              insert into companies (workspace_id, name, industry, size_band, location, google_rating, google_reviews, social,
+                                     campaign_id, source_channel)
               values (${workspaceId}::uuid, ${values.name}, ${values.industry}, ${values.size_band}, ${values.location},
-                      ${values.google_rating}, ${values.google_reviews}, ${values.social})
+                      ${values.google_rating}, ${values.google_reviews}, ${values.social}, ${campaign.id}::uuid, ${c.source})
               returning id`;
           }
         }
@@ -208,6 +214,104 @@ export class Store {
     });
   }
 
+  // ---------------------------------------------------------------- scheduling
+
+  async enqueueDue(hours: number): Promise<number> {
+    const rows = await this.sql`select agent_jobs_enqueue_due(${hours}::int) as n`;
+    return Number(rows[0].n);
+  }
+
+  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing'): Promise<boolean> {
+    const rows = await this.sql`select agent_job_enqueue(${workspaceId}::uuid, ${campaignId}::uuid, ${type}) as ok`;
+    return rows[0].ok === true;
+  }
+
+  async workspaceChannels(workspaceId: string): Promise<Record<string, boolean>> {
+    const rows = await this.sql`select enabled_channels from workspaces where id = ${workspaceId}::uuid`;
+    return (rows[0]?.enabled_channels ?? {}) as Record<string, boolean>;
+  }
+
+  // ---------------------------------------------------------------- enrichment
+
+  /** Companies this campaign found that still have no lead. */
+  async companiesWithoutLeads(workspaceId: string, campaignId: string, limit: number): Promise<PendingCompany[]> {
+    return (await this.sql`
+      select c.id, c.name, c.domain, c.location, c.industry, c.size_band, c.source_channel
+      from companies c
+      where c.workspace_id = ${workspaceId}::uuid and c.campaign_id = ${campaignId}::uuid
+        and c.enrichment_status = 'pending'
+        and not exists (select 1 from leads l where l.workspace_id = c.workspace_id and l.company_id = c.id)
+      order by c.created_at, c.name, c.id
+      limit ${limit}`) as unknown as PendingCompany[];
+  }
+
+  /** Companies with a domain that are missing firmographics. */
+  async companiesMissingDetails(workspaceId: string, campaignId: string, limit: number): Promise<PendingCompany[]> {
+    return (await this.sql`
+      select id, name, domain, location, industry, size_band, source_channel
+      from companies
+      where workspace_id = ${workspaceId}::uuid and campaign_id = ${campaignId}::uuid
+        and domain is not null and (industry is null or size_band is null) and enriched_at is null
+      order by created_at
+      limit ${limit}`) as unknown as PendingCompany[];
+  }
+
+  async updateCompany(workspaceId: string, id: string, status: 'enriched' | 'no_contact_found' | 'skipped' | null, details: { industry?: string; sizeBand?: string; location?: string; linkedin?: string } = {}) {
+    await this.sql`
+      update companies set
+        enrichment_status = coalesce(${status}, enrichment_status),
+        industry = coalesce(industry, ${details.industry ?? null}),
+        size_band = coalesce(size_band, ${details.sizeBand ?? null}),
+        location = coalesce(location, ${details.location ?? null}),
+        social = case when ${details.linkedin ?? null}::text is null then social else social || jsonb_build_object('linkedin', ${details.linkedin ?? null}::text) end,
+        enriched_at = now(), updated_at = now()
+      where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid`;
+  }
+
+  async leadsToVerify(workspaceId: string, campaignId: string, limit: number): Promise<{ id: string; email: string }[]> {
+    return (await this.sql`
+      select id, email from leads
+      where workspace_id = ${workspaceId}::uuid and campaign_id = ${campaignId}::uuid
+        and email is not null and verification_status = 'unverified' and email_checked_at is null
+        and stage <> 'do_not_contact'
+      order by created_at limit ${limit}`) as unknown as { id: string; email: string }[];
+  }
+
+  async setEmailVerdict(workspaceId: string, leadId: string, verdict: string, raw: string) {
+    await this.sql.begin(async (tx) => {
+      await tx`
+        update leads set verification_status = ${verdict}, email_checked_at = now(), updated_at = now()
+        where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid`;
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor)
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'note', 'email', ${`Email checked: ${VERDICT_LABELS[verdict] ?? verdict} (${raw})`}, 'ai')`;
+    });
+  }
+
+  async leadsToCheckPhone(workspaceId: string, campaignId: string, limit: number): Promise<{ id: string; phone: string }[]> {
+    return (await this.sql`
+      select id, phone from leads
+      where workspace_id = ${workspaceId}::uuid and campaign_id = ${campaignId}::uuid
+        and phone is not null and phone_checked_at is null and stage <> 'do_not_contact'
+      order by created_at limit ${limit}`) as unknown as { id: string; phone: string }[];
+  }
+
+  async setPhoneCheck(workspaceId: string, leadId: string, check: { e164?: string; country?: string; lineType: string; valid: boolean }) {
+    await this.sql.begin(async (tx) => {
+      await tx`
+        update leads set
+          phone = coalesce(${check.valid ? check.e164 ?? null : null}, phone),
+          phone_country = coalesce(${check.country ?? null}, phone_country),
+          phone_line_type = ${check.valid ? check.lineType : 'unknown'},
+          phone_checked_at = now(), updated_at = now()
+        where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid`;
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor)
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'note', 'voice',
+                ${check.valid ? `Phone checked: ${check.lineType}${check.country ? `, ${check.country}` : ''}` : 'Phone checked: not a valid number'}, 'ai')`;
+    });
+  }
+
   async runLogStart(workspaceId: string, workflow: string, correlationId: string): Promise<number> {
     const rows = await this.sql`
       insert into run_logs (workspace_id, workflow, status, correlation_id)
@@ -229,7 +333,16 @@ export class Store {
 
 export const SOURCE_LABELS: Record<LeadCandidate['source'], string> = {
   apollo: 'Apollo', google_maps: 'Google Maps', instagram: 'Instagram', llm_search: 'LLM search',
+  clay: 'Clay', facebook: 'Facebook', linkedin: 'LinkedIn', tiktok: 'TikTok', x: 'X', csv: 'CSV import',
+  inbound_call: 'an inbound call', manual: 'manual entry',
 };
+
+export type PendingCompany = {
+  id: string; name: string; domain: string | null; location: string | null; industry: string | null;
+  size_band: string | null; source_channel: LeadCandidate['source'] | null;
+};
+
+const VERDICT_LABELS: Record<string, string> = { valid: 'valid', invalid: 'invalid', catch_all: 'catch-all', risky: 'risky' };
 
 function uniq(values: (string | undefined)[]): string[] {
   return [...new Set(values.filter((v): v is string => Boolean(v)))];

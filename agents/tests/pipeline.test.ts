@@ -65,13 +65,20 @@ function apis(o: Overrides = {}) {
     [/instagram-profile-scraper/, o.apify ?? (() => [{ username: 'glowsmile', fullName: 'Glow Smile Studio', biography: 'hi@glowsmile.com', businessCategoryName: 'Dentist' }])],
   ]);
 }
+// Sourcing hands over to enrichment; that is tested in enrichment.test.ts,
+// so here each run clears the follow-up job to keep runs independent.
+async function run(d: Deps, limit: number) {
+  const out = await runQueuedJobs(d, limit);
+  await t.db.query(`delete from agent_jobs where type = 'enrichment' and status = 'queued'`);
+  return out;
+}
 const deps = (f = apis()): Deps => ({ store: t.store, models, fetchImpl: f.impl });
 
 describe('campaign planning job', () => {
   test('PIPE-01 the plan is saved, checked against connected tools, and logged', async () => {
     const c = await campaign(t.wsA);
     const id = await queue(t.wsA, c, 'campaign_plan');
-    const out = await runQueuedJobs(deps(apis({ openaiKey: 'sk-A' })), 5);
+    const out = await run(deps(apis({ openaiKey: 'sk-A' })), 5);
     expect(out).toEqual([{ id, type: 'campaign_plan', status: 'succeeded' }]);
     const j = await job(id);
     expect(j.result).toEqual({ provider: 'openai', enabled_sources: ['apollo', 'google_maps', 'instagram', 'llm_search'], titles: 2 });
@@ -87,7 +94,7 @@ describe('campaign planning job', () => {
     const c = await campaign(t.wsB);
     await t.db.query(`update integrations set status = 'disconnected' where workspace_id = $1 and tool = 'gemini'`, [t.wsB]);
     const id = await queue(t.wsB, c, 'campaign_plan');
-    await runQueuedJobs(deps(), 5);
+    await run(deps(), 5);
     await t.db.query(`update integrations set status = 'connected' where workspace_id = $1 and tool = 'gemini'`, [t.wsB]);
     const j = await job(id);
     expect(j.status).toBe('failed');
@@ -101,7 +108,7 @@ describe('lead sourcing job', () => {
   test('PIPE-03 leads from every source are stored with their channel, company and timeline', async () => {
     main = await campaign(t.wsA);
     const id = await queue(t.wsA, main, 'lead_sourcing');
-    await runQueuedJobs(deps(), 5);
+    await run(deps(), 5);
     const j = await job(id);
     expect(j.status).toBe('succeeded');
     const leads = await leadsOf(main);
@@ -135,7 +142,7 @@ describe('lead sourcing job', () => {
 
   test('PIPE-05 running again adds nothing new: everything is a duplicate', async () => {
     const id = await queue(t.wsA, main, 'lead_sourcing');
-    await runQueuedJobs(deps(), 5);
+    await run(deps(), 5);
     const j = await job(id);
     expect(j.status).toBe('succeeded');
     expect(j.result.added).toBe(0);
@@ -149,7 +156,7 @@ describe('lead sourcing job', () => {
     await t.db.query(`delete from leads where workspace_id = $1`, [t.wsA]);
     await t.db.query(`insert into suppressions (workspace_id, kind, value, reason) values ($1,'email','ana@ruizdental.com','unsubscribed'), ($1,'domain','smile2.com','customer')`, [t.wsA]);
     const id = await queue(t.wsA, c, 'lead_sourcing');
-    await runQueuedJobs(deps(), 5);
+    await run(deps(), 5);
     const emails = (await leadsOf(c)).map((l: any) => l.email);
     expect(emails).not.toContain('ana@ruizdental.com');
     expect(emails).not.toContain('hello@smile2.com');
@@ -164,10 +171,10 @@ describe('lead sourcing job', () => {
     await t.db.query(`delete from leads where workspace_id = $1`, [t.wsA]);
     const c = await campaign(t.wsA, { name: 'Small', daily_lead_limit: 3 });
     await queue(t.wsA, c, 'lead_sourcing');
-    await runQueuedJobs(deps(), 5);
+    await run(deps(), 5);
     expect(await leadsOf(c)).toHaveLength(3);
     const id = await queue(t.wsA, c, 'lead_sourcing');
-    await runQueuedJobs(deps(), 5);
+    await run(deps(), 5);
     expect((await job(id)).result).toMatchObject({ added: 0, note: 'The daily lead limit for this campaign is already reached' });
   });
 
@@ -175,7 +182,7 @@ describe('lead sourcing job', () => {
     await t.db.query(`delete from leads where workspace_id = $1`, [t.wsA]);
     const c = await campaign(t.wsA, { name: 'Apify down' });
     const id = await queue(t.wsA, c, 'lead_sourcing');
-    await runQueuedJobs(deps(apis({ apify: () => new Response('{}', { status: 401 }) })), 5);
+    await run(deps(apis({ apify: () => new Response('{}', { status: 401 }) })), 5);
     const j = await job(id);
     expect(j.status).toBe('succeeded');
     expect(j.result.sources.google_maps.error).toBe('Apify rejected the stored credentials');
@@ -191,7 +198,7 @@ describe('lead sourcing job', () => {
     const f = apis({ apify: down, apollo: down });
     const failing: Deps = { ...deps(f), fetchImpl: (async (u: any, i: any) => (/openai/.test(String(u)) && !String(i?.body).includes('campaign_plan') ? down() : f.impl(u, i))) as typeof fetch };
     const id = await queue(t.wsA, c, 'lead_sourcing');
-    await runQueuedJobs(failing, 5);
+    await run(failing, 5);
     const j = await job(id);
     expect(j.status).toBe('failed');
     expect(j.error).toMatch(/^Every lead source failed\. Apollo: Apollo returned an error \(503\); Google Maps:/);
@@ -203,7 +210,7 @@ describe('lead sourcing job', () => {
     const c = await campaign(t.wsB, { name: 'B dentists' });
     const f = apis();
     const id = await queue(t.wsB, c, 'lead_sourcing');
-    await runQueuedJobs(deps(f), 5);
+    await run(deps(f), 5);
     expect((await job(id)).status).toBe('succeeded');
     const apifyCalls = f.calls.filter((x) => /apify\.com/.test(x.url));
     expect(apifyCalls.length).toBeGreaterThan(0);
@@ -222,11 +229,11 @@ describe('lead sourcing job', () => {
     await t.db.query('update workspaces set outreach_paused = true where id = $1', [t.wsA]);
     const sourcing = await queue(t.wsA, c, 'lead_sourcing');
     const planning = await queue(t.wsA, c, 'campaign_plan');
-    const out = await runQueuedJobs(deps(), 5);
+    const out = await run(deps(), 5);
     await t.db.query('update workspaces set outreach_paused = false where id = $1', [t.wsA]);
     expect(out.map((o) => o.id)).toEqual([planning]);
     expect((await job(sourcing)).status).toBe('queued');
-    await runQueuedJobs(deps(), 5);
+    await run(deps(), 5);
     expect((await job(sourcing)).status).toBe('succeeded');
   });
 
@@ -235,9 +242,18 @@ describe('lead sourcing job', () => {
     const good = await campaign(t.wsA, { name: 'Good' });
     const bad = await queue(t.wsA, gone, 'campaign_plan');
     const ok = await queue(t.wsA, good, 'campaign_plan');
-    const out = await runQueuedJobs(deps(), 5);
+    const out = await run(deps(), 5);
     expect(out).toEqual([{ id: bad, type: 'campaign_plan', status: 'failed' }, { id: ok, type: 'campaign_plan', status: 'succeeded' }]);
     expect((await job(bad)).error).toBe('The campaign has no niche to plan from');
+  });
+
+  test('PIPE-14 a finished sourcing job hands over to enrichment', async () => {
+    const c = await campaign(t.wsA, { name: 'Handover' });
+    await queue(t.wsA, c, 'lead_sourcing');
+    await runQueuedJobs(deps(), 5);
+    const { rows } = await t.db.query(`select type, status, requested_by from agent_jobs where campaign_id = $1 order by type`, [c]);
+    expect(rows).toEqual([{ type: 'enrichment', status: 'queued', requested_by: null }, { type: 'lead_sourcing', status: 'succeeded', requested_by: USERS.ownerA }]);
+    await t.db.query(`delete from agent_jobs where campaign_id = $1 and type = 'enrichment'`, [c]);
   });
 
   test('PIPE-13 stored results and logs never contain a credential', async () => {

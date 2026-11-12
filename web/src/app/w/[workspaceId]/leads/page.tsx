@@ -1,13 +1,14 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { requireWorkspace } from '@/lib/session';
-import { LEAD_SOURCES, LEAD_STAGES, PAGE_SIZE, SOURCE_LABELS, STAGE_LABELS, filtersToQuery, parseLeadFilters, type LeadSource, type LeadStage } from '@/lib/campaigns';
+import { LEAD_SOURCES, LEAD_STAGES, LINE_TYPE_LABELS, PAGE_SIZE, SOURCE_LABELS, STAGE_LABELS, VERIFICATION_LABELS, VERIFICATION_STATUSES, filtersToQuery, parseLeadFilters, type LeadSource, type LeadStage, type VerificationStatus } from '@/lib/campaigns';
 
 export const metadata: Metadata = { title: 'Leads' };
 
 type LeadRow = {
   id: string; full_name: string | null; title: string | null; email: string | null; phone: string | null;
   social_handles: Record<string, string> | null; source_channel: LeadSource; stage: LeadStage; created_at: string;
+  verification_status: VerificationStatus; phone_line_type: string | null; phone_country: string | null;
   companies: { name: string; domain: string | null; location: string | null; google_rating: number | null } | null;
 };
 
@@ -25,10 +26,11 @@ export default async function LeadsPage({
 
   let query = supabase
     .from('leads')
-    .select('id, full_name, title, email, phone, social_handles, source_channel, stage, created_at, companies(name, domain, location, google_rating)', { count: 'exact' })
+    .select('id, full_name, title, email, phone, social_handles, source_channel, stage, created_at, verification_status, phone_line_type, phone_country, companies(name, domain, location, google_rating)', { count: 'exact' })
     .eq('workspace_id', workspace.id);
   if (f.source) query = query.eq('source_channel', f.source);
   if (f.stage) query = query.eq('stage', f.stage);
+  if (f.verification) query = query.eq('verification_status', f.verification);
   if (f.campaign) query = query.eq('campaign_id', f.campaign);
   if (f.q) query = query.or(`full_name.ilike.*${f.q}*,email.ilike.*${f.q}*,phone.ilike.*${f.q}*,title.ilike.*${f.q}*`);
   const from = (f.page - 1) * PAGE_SIZE;
@@ -68,8 +70,15 @@ export default async function LeadsPage({
             {LEAD_STAGES.map((s) => <option key={s} value={s}>{STAGE_LABELS[s]}</option>)}
           </select>
         </label>
+        <label className="field">
+          <span className="sr-only">Email check</span>
+          <select name="verification" defaultValue={f.verification ?? ''}>
+            <option value="">Any email check</option>
+            {VERIFICATION_STATUSES.map((v) => <option key={v} value={v}>{VERIFICATION_LABELS[v]}</option>)}
+          </select>
+        </label>
         <button className="btn btn-secondary" type="submit">Filter</button>
-        {f.q || f.stage || f.source || f.campaign ? <Link href={base}>Clear</Link> : null}
+        {f.q || f.stage || f.verification || f.source || f.campaign ? <Link href={base}>Clear</Link> : null}
       </form>
 
       <p className="muted" role="status">{total} {total === 1 ? 'lead' : 'leads'}{f.campaign ? ' in this campaign' : ''}</p>
@@ -96,8 +105,12 @@ export default async function LeadsPage({
                     {l.companies?.google_rating ? <><br /><span className="muted">★ {l.companies.google_rating}</span></> : null}
                   </td>
                   <td>
-                    {l.email ? <div>{l.email}</div> : null}
-                    {l.phone ? <div>{l.phone}</div> : null}
+                    {l.email ? (
+                      <div>{l.email} <span className={l.verification_status === 'valid' ? 'badge badge-ok' : l.verification_status === 'invalid' ? 'badge badge-error' : l.verification_status === 'unverified' ? 'badge' : 'badge badge-warn'}>{VERIFICATION_LABELS[l.verification_status] ?? l.verification_status}</span></div>
+                    ) : null}
+                    {l.phone ? (
+                      <div>{l.phone}{l.phone_line_type ? <span className="muted"> · {LINE_TYPE_LABELS[l.phone_line_type] ?? l.phone_line_type}{l.phone_country ? `, ${l.phone_country}` : ''}</span> : null}</div>
+                    ) : null}
                     {l.social_handles?.instagram ? <div>@{l.social_handles.instagram}</div> : null}
                   </td>
                   <td>{SOURCE_LABELS[l.source_channel] ?? l.source_channel}</td>

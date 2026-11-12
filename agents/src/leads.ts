@@ -1,9 +1,10 @@
 // The shape every source adapter returns, and the shared helpers to merge,
 // de-duplicate and check them before they are stored.
 
-import { normalizeEmail, normalizePhone, domainFromUrl, normalizeInstagramHandle, normalizeLinkedinUrl, cleanText } from './normalize.ts';
+import { normalizeEmail, normalizePhone, domainFromUrl, normalizeInstagramHandle, normalizeLinkedinUrl, cleanText, normalizePersonName } from './normalize.ts';
 
 export type SourceChannel = 'apollo' | 'google_maps' | 'instagram' | 'llm_search';
+export type LeadChannel = SourceChannel | 'clay' | 'facebook' | 'linkedin' | 'tiktok' | 'x' | 'csv' | 'inbound_call' | 'manual';
 
 export type CompanyCandidate = {
   name: string;
@@ -17,7 +18,7 @@ export type CompanyCandidate = {
 };
 
 export type LeadCandidate = {
-  source: SourceChannel;
+  source: LeadChannel;
   sourceQuery: string;
   fullName?: string;
   title?: string;
@@ -26,6 +27,8 @@ export type LeadCandidate = {
   linkedinUrl?: string;
   socialHandles?: Record<string, string>;
   company: CompanyCandidate;
+  /** Set when the lead belongs to a company that is already stored. */
+  companyId?: string;
 };
 
 export type SourceResult = { leads: LeadCandidate[]; found: number; creditsUsed?: number; notes?: string[] };
@@ -43,9 +46,10 @@ export function normalizeCandidate(c: LeadCandidate): LeadCandidate {
     if (value) companySocial[k] = value;
   }
   return {
+    companyId: c.companyId,
     source: c.source,
     sourceQuery: cleanText(c.sourceQuery, 300) ?? '',
-    fullName: cleanText(c.fullName, 160),
+    fullName: normalizePersonName(c.fullName),
     title: cleanText(c.title, 160),
     email: normalizeEmail(c.email),
     phone: normalizePhone(c.phone),
