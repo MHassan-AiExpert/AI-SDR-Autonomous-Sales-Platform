@@ -234,5 +234,22 @@ test('INF-24 the Vapi call events workflow forwards call results signed', () => 
   assert.equal(wf.nodes.find((n) => n.type === 'n8n-nodes-base.webhook').parameters.path, 'vapi/:token');
   assert.match(wf.nodes.find((n) => n.type === 'n8n-nodes-base.code').parameters.jsCode, /createHmac\('sha256', \$env\.PLATFORM_HMAC_SECRET\)/);
   assert.match(wf.nodes.find((n) => n.type === 'n8n-nodes-base.httpRequest').parameters.url, /\/webhooks\/vapi/);
-  assert.equal(new Set(planImport(new URL('infra/n8n/workflows', root).pathname).workflows.map((w) => w.id)).size, 4);
+  assert.ok(planImport(new URL('infra/n8n/workflows', root).pathname).workflows.some((w) => w.id === 'aisdrVapiEvents1'));
+});
+
+test('INF-25 the Twilio text events workflow forwards the signed form body and answers with empty TwiML', () => {
+  const wf = JSON.parse(readFileSync(new URL('infra/n8n/workflows/twilio-events.json', root), 'utf8'));
+  const hook = wf.nodes.find((n) => n.type === 'n8n-nodes-base.webhook').parameters;
+  assert.equal(hook.path, 'twilio/:token');
+  assert.equal(hook.options.rawBody, true);
+  assert.equal(hook.options.responseContentType, 'text/xml');
+  assert.match(hook.options.responseData, /<Response><\/Response>/);
+  const code = wf.nodes.find((n) => n.type === 'n8n-nodes-base.code').parameters.jsCode;
+  assert.match(code, /getBinaryDataBuffer\(i, 'data'\)/);
+  assert.match(code, /x-twilio-signature/);
+  assert.match(code, /createHmac\('sha256', \$env\.PLATFORM_HMAC_SECRET\)/);
+  assert.match(wf.nodes.find((n) => n.type === 'n8n-nodes-base.httpRequest').parameters.url, /\/webhooks\/twilio/);
+  const ids = planImport(new URL('infra/n8n/workflows', root).pathname).workflows.map((w) => w.id);
+  assert.equal(ids.length, 5);
+  assert.equal(new Set(ids).size, 5);
 });

@@ -1,0 +1,115 @@
+{
+  "id": "aisdrTwilioEvnt1",
+  "name": "Twilio text events",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "twilio/:token",
+        "responseMode": "onReceived",
+        "responseCode": 200,
+        "options": {
+          "rawBody": true,
+          "responseContentType": "text/xml",
+          "responseData": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
+        }
+      },
+      "id": "9c4e5d3a-4a61-4e3c-9d43-3b2c8c2e1301",
+      "name": "Twilio webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "c5f3e4d6-7d80-4b92-8cb3-d4e5f6a7b803"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Forward the exact form body Twilio signed, with its X-Twilio-Signature, so the agent can verify it.\nconst crypto = require('crypto');\nconst out = [];\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  let raw = '';\n  if (item.binary && item.binary.data) {\n    const buf = await this.helpers.getBinaryDataBuffer(i, 'data');\n    raw = buf.toString('utf8');\n  } else {\n    raw = new URLSearchParams(item.json.body ?? {}).toString();\n  }\n  const headers = item.json.headers ?? {};\n  const body = JSON.stringify({ token: String(item.json.params?.token ?? ''), raw, signature: String(headers['x-twilio-signature'] ?? '') });\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = crypto.createHmac('sha256', $env.PLATFORM_HMAC_SECRET).update(`${timestamp}.${body}`).digest('hex');\n  out.push({ json: { timestamp, body, signature } });\n}\nreturn out;"
+      },
+      "id": "9c4e5d3a-4a61-4e3c-9d43-3b2c8c2e1302",
+      "name": "Sign event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AGENT_SERVICE_URL }}/webhooks/twilio",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "9c4e5d3a-4a61-4e3c-9d43-3b2c8c2e1303",
+      "name": "Deliver to agent service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Twilio webhook": {
+      "main": [
+        [
+          {
+            "node": "Sign event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign event": {
+      "main": [
+        [
+          {
+            "node": "Deliver to agent service",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "timezone": "UTC"
+  },
+  "active": true
+}

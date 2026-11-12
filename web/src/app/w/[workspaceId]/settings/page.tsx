@@ -4,6 +4,7 @@ import { canManageSettings } from '@/lib/roles';
 import { requireWorkspace } from '@/lib/session';
 import { CHANNELS, CHANNEL_LABELS } from '@/lib/validation';
 import { rotateWebhookToken, updateSettings } from '../actions';
+import { inboundWebhookUrl } from '@/lib/texting';
 
 export const metadata: Metadata = { title: 'Settings' };
 
@@ -16,6 +17,7 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
   const { data: hook } = manage ? await supabase.from('workspaces').select('webhook_token').eq('id', workspace.id).maybeSingle() : { data: null };
   const hookBase = (process.env.NEXT_PUBLIC_WEBHOOK_BASE_URL ?? '').replace(/\/$/, '');
   const hookUrl = hook?.webhook_token && hookBase ? `${hookBase}/webhook/instantly/${hook.webhook_token}` : null;
+  const twilioUrl = inboundWebhookUrl(hookBase, hook?.webhook_token ?? null);
 
   return (
     <>
@@ -72,9 +74,13 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
 
       {manage ? (
         <section className="card stack" aria-labelledby="webhook">
-          <h2 id="webhook">Instantly webhook</h2>
+          <h2 id="webhook">Webhook addresses</h2>
+          <h3>Instantly</h3>
           <p className="muted">So replies, bounces and unsubscribes reach the AI reply agent, add a webhook in Instantly (Settings, Integrations, Webhooks) with this address and select all events. Keep it private: anyone with it can send events to this workspace.</p>
           {hookUrl ? <code className="pre">{hookUrl}</code> : <p className="muted">Set NEXT_PUBLIC_WEBHOOK_BASE_URL to the public address of your n8n instance to show the webhook address.</p>}
+          <h3>Twilio texts</h3>
+          <p className="muted">So text replies and STOP requests reach the reply agent, open each sending number (or Messaging Service) in Twilio and set &ldquo;A message comes in&rdquo; to this address, method HTTP POST. Delivery updates use it automatically.</p>
+          {twilioUrl ? <code className="pre">{twilioUrl}</code> : null}
           <ActionForm action={rotateWebhookToken}>
             <input type="hidden" name="workspace_id" value={workspace.id} />
             <SubmitButton variant="secondary">Create a new address</SubmitButton>

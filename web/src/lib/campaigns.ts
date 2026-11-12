@@ -110,9 +110,9 @@ export function filtersToQuery(f: LeadFilters, overrides: Partial<LeadFilters> =
   return s ? `?${s}` : '';
 }
 
-export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies', reply_send: 'Send answers', voice_outreach: 'AI calls' };
+export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies', reply_send: 'Send answers', voice_outreach: 'AI calls', sms_outreach: 'Text follow-ups' };
 
-export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach', 'voice_outreach'] as const;
+export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach', 'voice_outreach', 'sms_outreach'] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 export const JOB_STATUS_LABELS: Record<string, string> = { queued: 'Queued', running: 'Running', succeeded: 'Done', failed: 'Failed' };
 
@@ -142,11 +142,18 @@ export function describeJobResult(type: string, status: string, result: unknown,
     const held = Object.entries(reasons).map(([k, v]) => `${num(v)} ${k}`).join(', ');
     return `${plural(num(r.calls_started), 'call')} started${num(r.failed) ? `, ${num(r.failed)} could not start` : ''}${held ? `; not called: ${held}` : ''}.`;
   }
+  if (type === 'sms_outreach') {
+    if (typeof r.note === 'string') return r.note;
+    const reasons = obj(r.reasons);
+    const held = Object.entries(reasons).map(([k, v]) => `${num(v)} ${k}`).join(', ');
+    return `${plural(num(r.sent), 'text')} sent${num(r.failed) ? `, ${num(r.failed)} could not be sent` : ''}${held ? `; not texted: ${held}` : ''}.`;
+  }
   if (type === 'reply_send') {
     if (typeof r.note === 'string') return r.note;
     const parts = [`${plural(num(r.sent), 'answer')} sent`];
     if (num(r.failed)) parts.push(`${num(r.failed)} could not be sent`);
-    if (num(r.skipped)) parts.push(`${num(r.skipped)} skipped because the lead opted out or the thread is unknown`);
+    if (num(r.skipped)) parts.push(`${num(r.skipped)} skipped because the lead opted out or the answer could not be delivered`);
+    if (num(r.waiting)) parts.push(`${num(r.waiting)} waiting until their channel is switched on`);
     return `${parts.join('; ')}.${typeof r.error === 'string' ? ` ${r.error}` : ''}`;
   }
   if (type === 'reply_handling') {

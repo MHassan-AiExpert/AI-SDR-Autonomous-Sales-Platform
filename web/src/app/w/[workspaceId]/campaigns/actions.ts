@@ -11,6 +11,7 @@ import { firstError, uuidSchema } from '@/lib/validation';
 import { parseEmailSettings, outreachReadiness } from '@/lib/outreach';
 import { BOOKING_EVENT_TYPE } from '@/lib/replies';
 import { parseVoiceSettings, voiceReadiness } from '@/lib/voice';
+import { parseTextSettings, textReadiness } from '@/lib/texting';
 
 const NO_PERMISSION = 'Only owners and admins can manage campaigns.';
 
@@ -67,6 +68,7 @@ export async function queueAgentJob(_prev: FormState, form: FormData): Promise<F
     copywriting: 'The copywriting agent will write emails for new qualified leads within a minute.',
     email_outreach: 'Approved emails will be handed to Instantly within a minute.',
     voice_outreach: 'The AI caller will start calls within a minute, if it is inside calling hours.',
+    sms_outreach: 'Text follow-ups will go out within a minute, if it is inside contact hours.',
   };
   return { notice: notices[type] };
 }
@@ -279,4 +281,52 @@ export async function setVoiceStatus(_prev: FormState, form: FormData): Promise<
   if (status === 'live') await supabase.from('agent_jobs').insert({ workspace_id: ws.data, campaign_id: campaignId.data, type: 'voice_outreach', requested_by: user.id });
   revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
   return { notice: status === 'live' ? 'AI calling is live. Calls start in the next calling window.' : 'AI calling paused. Calls already in progress finish normally.' };
+}
+
+export async function saveTextSettings(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  const parsed = parseTextSettings(form);
+  if (!parsed.success) return { error: firstError(parsed.error) };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('campaigns')
+    .update({ ...parsed.data, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data).eq('id', campaignId.data).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
+  return { notice: 'Text settings saved.' };
+}
+
+export async function setTextStatus(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  const status = form.get('status');
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  if (status !== 'live' && status !== 'paused') return { error: 'Unknown status.' };
+  const { supabase, user } = await requireUser();
+  if (status === 'live') {
+    const [{ data: c }, { data: w }, { data: tools }] = await Promise.all([
+      supabase.from('campaigns').select('sms_channel, sms_from, whatsapp_from, whatsapp_content_sid, status').eq('workspace_id', ws.data).eq('id', campaignId.data).maybeSingle(),
+      supabase.from('workspaces').select('enabled_channels').eq('id', ws.data).maybeSingle(),
+      supabase.from('integrations').select('status').eq('workspace_id', ws.data).eq('tool', 'twilio'),
+    ]);
+    if (!c || !w) return { error: 'Campaign not found.' };
+    const { items, ready } = textReadiness({
+      twilioConnected: (tools ?? []).some((t) => t.status === 'connected'),
+      channel: c.sms_channel === 'whatsapp' ? 'whatsapp' : 'sms',
+      channelOn: (w.enabled_channels as Record<string, boolean>)?.[c.sms_channel] !== false,
+      smsFrom: c.sms_from, whatsappFrom: c.whatsapp_from, contentSid: c.whatsapp_content_sid,
+    });
+    if (!ready) return { error: `Before launching texts: ${items.filter((i) => !i.done).map((i) => i.label.toLowerCase()).join('; ')}.` };
+    if (c.status !== 'active') return { error: 'Resume the campaign before launching texts.' };
+  }
+  const { data, error } = await supabase.from('campaigns').update({ sms_status: status, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data).eq('id', campaignId.data).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  if (status === 'live') await supabase.from('agent_jobs').insert({ workspace_id: ws.data, campaign_id: campaignId.data, type: 'sms_outreach', requested_by: user.id });
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
+  return { notice: status === 'live' ? 'Text follow-ups are live. They go out in the next contact window.' : 'Text follow-ups paused.' };
 }

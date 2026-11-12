@@ -7,6 +7,7 @@ import { EMAIL_STATUS_LABELS } from '@/lib/outreach';
 import { CONSENT_BASES, CONSENT_LABELS, OUTCOME_LABELS, safeRecordingUrl, type ConsentBasis } from '@/lib/voice';
 import { ActionForm, SubmitButton } from '@/components/action-form';
 import { setCallConsent } from '../../actions';
+import { CHANNEL_LABELS, DELIVERY_LABELS, TEXT_CONSENT_BASES, TEXT_CONSENT_LABELS, type TextChannel } from '@/lib/texting';
 import { ANSWER_LABELS, REPLY_LABELS, replyBadge, safeConversationUrl, safeMeetingUrl, type ReplyClass } from '@/lib/replies';
 import { LINE_TYPE_LABELS, SOURCE_LABELS, STAGE_LABELS, VERIFICATION_LABELS, readLeadReport, type LeadSource, type LeadStage, type VerificationStatus } from '@/lib/campaigns';
 
@@ -56,7 +57,15 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
     .eq('lead_id', lead.id)
     .order('created_at', { ascending: false })
     .limit(20);
+  const { data: texts } = await supabase
+    .from('messages')
+    .select('id, created_at, channel, direction, body, delivery_status, error, step')
+    .eq('workspace_id', workspace.id)
+    .eq('lead_id', lead.id)
+    .order('created_at', { ascending: false })
+    .limit(30);
   const canAct = workspace.role !== 'viewer';
+  const textConsent = (ch: TextChannel) => (typeof lead.consent?.[ch] === 'string' ? (lead.consent[ch] as keyof typeof TEXT_CONSENT_LABELS) : null);
   const consentBasis = typeof lead.consent?.voice === 'string' ? (lead.consent.voice as ConsentBasis) : null;
   const { data: meetings } = await supabase
     .from('meetings')
@@ -180,6 +189,47 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
             </article>
           );
         })}
+      </section>
+
+      <section className="card stack" aria-labelledby="texts">
+        <h2 id="texts">Texts</h2>
+        {(['sms', 'whatsapp'] as const).map((ch) => {
+          const basis = textConsent(ch);
+          return (
+            <div key={ch} className="stack">
+              <p className="muted">Consent to receive {CHANNEL_LABELS[ch]} messages: <strong>{basis ? TEXT_CONSENT_LABELS[basis] ?? basis : 'none recorded'}</strong></p>
+              {canAct ? (
+                <ActionForm action={setCallConsent} className="row">
+                  <input type="hidden" name="workspace_id" value={workspace.id} />
+                  <input type="hidden" name="lead_id" value={lead.id} />
+                  <input type="hidden" name="channel" value={ch} />
+                  <label className="field"><span className="sr-only">{CHANNEL_LABELS[ch]} consent basis</span>
+                    <select name="basis" defaultValue={basis ?? ''}>
+                      <option value="" disabled>Record consent…</option>
+                      {TEXT_CONSENT_BASES.map((b) => <option key={b} value={b}>{TEXT_CONSENT_LABELS[b]}</option>)}
+                      {basis ? <option value="withdraw">Remove consent</option> : null}
+                    </select>
+                  </label>
+                  <SubmitButton variant="secondary">Save</SubmitButton>
+                </ActionForm>
+              ) : null}
+            </div>
+          );
+        })}
+        {!texts?.length ? <p className="muted">No texts yet.</p> : (
+          <ul className="list">
+            {texts.map((m) => (
+              <li key={m.id} className="stack">
+                <div className="spread">
+                  <strong>{m.direction === 'inbound' ? 'They wrote' : m.step ? `Follow-up ${m.step}` : 'You wrote'} · {CHANNEL_LABELS[m.channel as TextChannel] ?? m.channel} · <time dateTime={m.created_at}>{new Date(m.created_at).toUTCString()}</time></strong>
+                  <span className={m.delivery_status === 'failed' ? 'badge badge-error' : 'badge'}>{DELIVERY_LABELS[m.delivery_status] ?? m.delivery_status}</span>
+                </div>
+                <p className="pre">{m.body}</p>
+                {m.delivery_status === 'failed' && m.error ? <p className="muted">{m.error}</p> : null}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="card stack" aria-labelledby="meetings">

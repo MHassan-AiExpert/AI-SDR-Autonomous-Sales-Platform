@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: 'Inbox' };
 
 type Row = {
   id: string; lead_id: string; body: string; subject: string | null; classification: ReplyClass | null; confidence: number | null;
-  summary: string | null; suggested_response: string | null; conversation_url: string | null; handled_at: string | null; created_at: string;
+  summary: string | null; suggested_response: string | null; conversation_url: string | null; channel: string; handled_at: string | null; created_at: string;
   answer: string | null; answer_status: string; answer_error: string | null; booking_url: string | null;
   leads: { full_name: string | null; email: string | null; stage: string; companies: { name: string } | null } | null;
 };
@@ -22,7 +22,7 @@ export default async function InboxPage({ params, searchParams }: { params: Prom
   const canAct = workspace.role !== 'viewer';
 
   let q = supabase.from('replies')
-    .select('id, lead_id, body, subject, classification, confidence, summary, suggested_response, conversation_url, handled_at, created_at, answer, answer_status, answer_error, booking_url, leads(full_name, email, stage, companies(name))')
+    .select('id, lead_id, channel, body, subject, classification, confidence, summary, suggested_response, conversation_url, handled_at, created_at, answer, answer_status, answer_error, booking_url, leads(full_name, email, stage, companies(name))')
     .eq('workspace_id', workspace.id);
   if (f.view === 'open') q = q.is('handled_at', null);
   if (f.view === 'handled') q = q.not('handled_at', 'is', null);
@@ -41,7 +41,7 @@ export default async function InboxPage({ params, searchParams }: { params: Prom
   return (
     <>
       <h1>Inbox</h1>
-      <p className="muted">Replies to your outreach, read and sorted by the AI reply agent. Opt-outs are suppressed automatically; answer the rest from Instantly with the suggested reply.</p>
+      <p className="muted">Email and text replies to your outreach, read and sorted by the AI reply agent. Opt-outs are suppressed automatically. Approve an answer to send it in the same email thread, SMS or WhatsApp chat.</p>
       <nav className="chips" aria-label="View">
         {(['open', 'handled', 'all'] as const).map((v) => <Link key={v} className={f.view === v ? 'chip chip-on' : 'chip'} href={link({ view: v })}>{v === 'open' ? 'To handle' : v === 'handled' ? 'Handled' : 'All'}</Link>)}
       </nav>
@@ -56,7 +56,7 @@ export default async function InboxPage({ params, searchParams }: { params: Prom
         return (
           <article key={r.id} className="card stack">
             <div className="spread">
-              <h2><Link href={`/w/${workspace.id}/leads/${r.lead_id}`}>{r.leads?.full_name ?? r.leads?.email ?? 'Lead'}</Link>{r.leads?.companies?.name ? <span className="muted"> · {r.leads.companies.name}</span> : null}</h2>
+              <h2><Link href={`/w/${workspace.id}/leads/${r.lead_id}`}>{r.leads?.full_name ?? r.leads?.email ?? 'Lead'}</Link>{r.leads?.companies?.name ? <span className="muted"> · {r.leads.companies.name}</span> : null}<span className="muted"> · {r.channel === 'sms' ? 'SMS' : r.channel === 'whatsapp' ? 'WhatsApp' : 'Email'}</span></h2>
               <span className={`badge badge-${replyBadge(r.classification)}`}>{r.classification ? REPLY_LABELS[r.classification] : 'Unread'}{r.confidence !== null ? ` · ${Math.round(Number(r.confidence) * 100)}%` : ''}</span>
             </div>
             {r.summary ? <p><strong>{r.summary}</strong></p> : null}

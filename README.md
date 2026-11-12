@@ -70,7 +70,7 @@ flowchart TB
         E1["Email<br/>Instantly"]
         E2["Voice agents<br/>Vapi"]
         E3["Twilio<br/>calls and SMS"]
-        E4["WhatsApp<br/>Cloud API"]
+        E4["WhatsApp<br/>via Twilio"]
         E5["Zoom<br/>Recall.ai bot"]
         E6["CRM<br/>HubSpot"]
         E7["Calendar<br/>Calendly"]
@@ -228,7 +228,7 @@ Every module, with its numbered functional requirements, is defined in the [Soft
 | Email | Instantly |
 | Voice agents | Vapi (cold caller, closer, receptionist) |
 | Telephony and SMS | Twilio |
-| WhatsApp | WhatsApp Business Platform (Cloud API) |
+| WhatsApp | WhatsApp Business Platform through Twilio (approved senders and templates) |
 | Meetings | Zoom API, Recall.ai meeting bot, Calendly |
 | Deals | PandaDoc (e-signature), Stripe (payments) |
 | CRM and alerts | HubSpot, Slack |
@@ -385,6 +385,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F09](reports/F09-reply-handling/feature-report.md) | AI reply handling, opt-out and bounce suppression, Slack alerts and reply inbox | 43 passed |
 | [F10](reports/F10-answers-booking/feature-report.md) | AI answers in the email thread, Calendly booking links and meetings | 38 passed |
 | [F11](reports/F11-ai-voice-calling/feature-report.md) | AI voice calling with consent rules, calling hours, transcripts and recordings | 41 passed |
+| [F12](reports/F12-sms-whatsapp-follow-ups/feature-report.md) | SMS and WhatsApp follow-ups with consent rules, two-way replies and STOP handling | 43 passed |
 
 ---
 

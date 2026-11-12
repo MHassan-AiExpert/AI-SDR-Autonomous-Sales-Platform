@@ -42,7 +42,8 @@ describe('answers and meetings', () => {
   });
 
   it('RIN-06 answer sending runs are described in plain words', () => {
-    expect(describeJobResult('reply_send', 'succeeded', { sent: 2, failed: 1, skipped: 1 }, null)).toBe('2 answers sent; 1 could not be sent; 1 skipped because the lead opted out or the thread is unknown.');
-    expect(describeJobResult('reply_send', 'succeeded', { sent: 0, note: 'Email outreach is paused, so answers are waiting.' }, null)).toBe('Email outreach is paused, so answers are waiting.');
+    expect(describeJobResult('reply_send', 'succeeded', { sent: 2, failed: 1, skipped: 1 }, null)).toBe('2 answers sent; 1 could not be sent; 1 skipped because the lead opted out or the answer could not be delivered.');
+    expect(describeJobResult('reply_send', 'succeeded', { sent: 1, waiting: 2 }, null)).toBe('1 answer sent; 2 waiting until their channel is switched on.');
+    expect(describeJobResult('reply_send', 'succeeded', { sent: 0, note: 'Outreach is paused, so answers are waiting.' }, null)).toBe('Outreach is paused, so answers are waiting.');
   });
 });

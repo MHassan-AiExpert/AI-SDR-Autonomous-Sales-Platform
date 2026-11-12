@@ -144,11 +144,67 @@ export async function runReplyHandling(deps: Deps, job: Job, campaign: Campaign)
   }
   return JSON.parse(JSON.stringify(stats)) as typeof stats;
 
+  type ReplyLead = { id: string; email: string | null; full_name: string | null; stage: string; company_name: string | null; phone?: string | null };
+
+  async function processReply(ev: InboundEvent, lead: ReplyLead, body: string, o: {
+    channel: 'email' | 'sms' | 'whatsapp'; auto: boolean; subject: string | null; url: string | null; replyTo: string | null; account: string | null; canSend: boolean;
+  }) {
+    clients ??= buildClients(await llmKeys(deps, ws, connected), deps.models, deps.fetchImpl);
+    const c = o.auto
+      ? { classification: 'out_of_office' as ReplyClass, confidence: 0.9, summary: 'Automatic reply.', suggested_response: '', by: 'rules' as const }
+      : await classifyReply(clients, body, campaign.offer, { job: job.id, event: ev.id }, campaign.sender_name);
+    // Interested prospects get a single-use booking link with the answer
+    let booking: string | null = null;
+    if (BOOKING.has(c.classification)) {
+      try {
+        booking = await bookingLinkFor({ store, fetchImpl: deps.fetchImpl, webhookBaseUrl: deps.webhookBaseUrl }, ws, campaign.booking_event_type, lead.id);
+      } catch (err) {
+        log('warn', 'booking link failed', { job: job.id, error: err instanceof Error ? err.message : 'unknown' });
+      }
+    }
+    const answer = c.suggested_response ? (booking ? `${c.suggested_response}\n\nPick a time that suits you here: ${booking}` : c.suggested_response) : null;
+    const autoSend = Boolean(answer && o.canSend && autopilot && campaign.auto_answer && AUTO_SEND.has(c.classification) && c.confidence >= 0.85);
+    await store.saveReply(ws, campaign.id, lead.id, ev.id, {
+      body: body.slice(0, 10_000), subject: o.subject, classification: c.classification,
+      confidence: c.confidence, summary: c.summary.slice(0, 300), suggested: c.suggested_response || null,
+      url: o.url, by: c.by === 'ai' ? 'ai' : null,
+      answer, answerStatus: answer ? (autoSend ? 'approved' : 'draft') : 'none', bookingUrl: booking, replyTo: o.replyTo, account: o.account, channel: o.channel,
+    });
+    if (autoSend) { stats.auto_answers++; await store.enqueue(ws, campaign.id, 'reply_send').catch(() => false); }
+    stats.replies++;
+    // The lead answered: the rest of the sequence will not go out
+    if (c.classification !== 'out_of_office') await store.cancelRemaining(ws, campaign.id, lead.id);
+    if (c.classification === 'unsubscribe') {
+      if (o.channel === 'email' && lead.email) await store.optOut(ws, campaign.id, lead.id, lead.email, 'Asked to stop in a reply');
+      else await store.textOptOut(ws, lead.id, lead.phone ?? null, 'Asked to stop in a text', o.channel === 'whatsapp' ? 'whatsapp' : 'sms');
+      stats.unsubscribed++;
+    } else {
+      const target = CLASS_STAGE[c.classification];
+      if (target) await store.setStage(ws, lead.id, nextStage(lead.stage, target));
+      if (c.classification === 'not_now') await store.addFollowUp(ws, lead.id, 30);
+    }
+    if (HOT.has(c.classification)) {
+      stats.hot++;
+      const who = slackEscape(lead.full_name ?? lead.email ?? lead.phone ?? 'Lead');
+      const via = o.channel === 'email' ? '' : o.channel === 'sms' ? ' by text' : ' on WhatsApp';
+      const link = deps.appUrl ? ` <${deps.appUrl}/w/${ws}/leads/${lead.id}|Open lead>` : '';
+      alerts.push(`• *${CLASS_LABELS[c.classification]}*${via}: ${who}${lead.company_name ? ` (${slackEscape(lead.company_name)})` : ''}: ${slackEscape(c.summary)}${link}`);
+    }
+  }
+
   async function handleEvent(ev: InboundEvent): Promise<'processed' | 'ignored'> {
     const p = ev.payload;
     if (ev.event_type === 'account_error') {
       const account = text(p.email_account);
       alerts.push(`• *Mailbox problem* in Instantly${account ? ` for ${slackEscape(account)}` : ''}. Check the mailbox in Instantly.`);
+      return 'processed';
+    }
+    if (ev.event_type === 'message_received') {
+      const lead = typeof p.lead_id === 'string' ? await store.leadById(ws, p.lead_id) : null;
+      const body = text(p.body);
+      if (!lead || !body.trim()) return 'ignored';
+      const channel = p.channel === 'whatsapp' ? 'whatsapp' : 'sms';
+      await processReply(ev, lead, body, { channel, auto: false, subject: null, url: null, replyTo: null, account: null, canSend: true });
       return 'processed';
     }
     const lead = ev.lead_email ? await store.leadByEmail(ws, ev.lead_email) : null;
@@ -174,46 +230,14 @@ export async function runReplyHandling(deps: Deps, job: Job, campaign: Campaign)
       case 'auto_reply_received': {
         const body = text(p.reply_text) || text(p.reply_text_snippet);
         if (!body.trim()) return 'ignored';
-        clients ??= buildClients(await llmKeys(deps, ws, connected), deps.models, deps.fetchImpl);
-        const c = ev.event_type === 'auto_reply_received'
-          ? { classification: 'out_of_office' as ReplyClass, confidence: 0.9, summary: 'Automatic reply.', suggested_response: '', by: 'rules' as const }
-          : await classifyReply(clients, body, campaign.offer, { job: job.id, event: ev.id }, campaign.sender_name);
         const url = text(p.unibox_url);
-        // Interested prospects get a single-use booking link with the answer
-        let booking: string | null = null;
-        if (BOOKING.has(c.classification)) {
-          try {
-            booking = await bookingLinkFor({ store, fetchImpl: deps.fetchImpl, webhookBaseUrl: deps.webhookBaseUrl }, ws, campaign.booking_event_type, lead.id);
-          } catch (err) {
-            log('warn', 'booking link failed', { job: job.id, error: err instanceof Error ? err.message : 'unknown' });
-          }
-        }
-        const answer = c.suggested_response ? (booking ? `${c.suggested_response}\n\nPick a time that suits you here: ${booking}` : c.suggested_response) : null;
         const replyTo = text(p.email_id) || null;
         const account = text(p.email_account) || null;
-        const autoSend = Boolean(answer && replyTo && account && autopilot && campaign.auto_answer && AUTO_SEND.has(c.classification) && c.confidence >= 0.85);
-        await store.saveReply(ws, campaign.id, lead.id, ev.id, {
-          body: body.slice(0, 10_000), subject: text(p.reply_subject).slice(0, 300) || null, classification: c.classification,
-          confidence: c.confidence, summary: c.summary.slice(0, 300), suggested: c.suggested_response || null,
-          url: /^https:\/\/([a-z0-9-]+\.)*instantly\.ai\//.test(url) ? url.slice(0, 2000) : null, by: c.by === 'ai' ? 'ai' : null,
-          answer, answerStatus: answer ? (autoSend ? 'approved' : 'draft') : 'none', bookingUrl: booking, replyTo, account,
+        await processReply(ev, lead, body, {
+          channel: 'email', auto: ev.event_type === 'auto_reply_received', subject: text(p.reply_subject).slice(0, 300) || null,
+          url: /^https:\/\/([a-z0-9-]+\.)*instantly\.ai\//.test(url) ? url.slice(0, 2000) : null, replyTo, account,
+          canSend: Boolean(replyTo && account),
         });
-        if (autoSend) { stats.auto_answers++; await store.enqueue(ws, campaign.id, 'reply_send').catch(() => false); }
-        stats.replies++;
-        // The lead answered: the rest of the sequence will not go out
-        if (c.classification !== 'out_of_office') await store.cancelRemaining(ws, campaign.id, lead.id);
-        if (c.classification === 'unsubscribe') { await store.optOut(ws, campaign.id, lead.id, lead.email, 'Asked to stop in a reply'); stats.unsubscribed++; }
-        else {
-          const target = CLASS_STAGE[c.classification];
-          if (target) await store.setStage(ws, lead.id, nextStage(lead.stage, target));
-          if (c.classification === 'not_now') await store.addFollowUp(ws, lead.id, 30);
-        }
-        if (HOT.has(c.classification)) {
-          stats.hot++;
-          const who = slackEscape(lead.full_name ?? lead.email);
-          const link = deps.appUrl ? ` <${deps.appUrl}/w/${ws}/leads/${lead.id}|Open lead>` : '';
-          alerts.push(`• *${CLASS_LABELS[c.classification]}*: ${who}${lead.company_name ? ` (${slackEscape(lead.company_name)})` : ''}: ${slackEscape(c.summary)}${link}`);
-        }
         return 'processed';
       }
       default: {

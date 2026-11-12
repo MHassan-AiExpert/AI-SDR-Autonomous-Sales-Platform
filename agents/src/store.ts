@@ -24,7 +24,7 @@ export type Job = {
   id: string;
   workspace_id: string;
   campaign_id: string;
-  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach';
+  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach';
   attempts: number;
   correlation_id: string;
 };
@@ -68,6 +68,14 @@ export type Campaign = {
   call_max_attempts: number;
   call_rule: 'consent_only' | 'consent_or_business_landline';
   dnc_attested_at: string | Date | null;
+  sms_status: string;
+  sms_channel: 'sms' | 'whatsapp';
+  sms_from: string | null;
+  whatsapp_from: string | null;
+  whatsapp_content_sid: string | null;
+  sms_after_days: number;
+  sms_daily_limit: number;
+  sms_max_messages: number;
 };
 
 export class Store {
@@ -90,7 +98,8 @@ export class Store {
              status, mode, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start,
              send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state,
              auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start,
-             call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at
+             call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at, sms_status, sms_channel, sms_from,
+             whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages
       from campaigns where workspace_id = ${workspaceId}::uuid and id = ${campaignId}::uuid`;
     if (!rows.length) return null;
     const c = rows[0] as unknown as Campaign;
@@ -255,7 +264,7 @@ export class Store {
     return Number(rows[0].n);
   }
 
-  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach'): Promise<boolean> {
+  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach'): Promise<boolean> {
     const rows = await this.sql`select agent_job_enqueue(${workspaceId}::uuid, ${campaignId}::uuid, ${type}) as ok`;
     return rows[0].ok === true;
   }
@@ -492,7 +501,7 @@ export class Store {
     return rows[0]?.id ?? null;
   }
 
-  async insertInboundEvent(workspaceId: string, campaignId: string | null, type: string, leadEmail: string | null, payload: Record<string, unknown>, dedupe: string, status: 'received' | 'ignored', provider: 'instantly' | 'calendly' | 'vapi' = 'instantly'): Promise<string | null> {
+  async insertInboundEvent(workspaceId: string, campaignId: string | null, type: string, leadEmail: string | null, payload: Record<string, unknown>, dedupe: string, status: 'received' | 'ignored', provider: 'instantly' | 'calendly' | 'vapi' | 'twilio' = 'instantly'): Promise<string | null> {
     const rows = await this.sql`
       insert into inbound_events (workspace_id, campaign_id, provider, event_type, lead_email, payload, dedupe_key, status, processed_at)
       values (${workspaceId}::uuid, ${campaignId}, ${provider}, ${type}, ${leadEmail}, ${this.sql.json(payload as postgres.JSONValue)}, ${dedupe}, ${status},
@@ -504,8 +513,8 @@ export class Store {
 
   async pendingEvents(workspaceId: string, campaignId: string, limit: number): Promise<InboundEvent[]> {
     return (await this.sql`
-      select id, event_type, lead_email, payload from inbound_events
-      where workspace_id = ${workspaceId}::uuid and campaign_id = ${campaignId}::uuid and status = 'received' and provider = 'instantly'
+      select id, provider, event_type, lead_email, payload from inbound_events
+      where workspace_id = ${workspaceId}::uuid and campaign_id = ${campaignId}::uuid and status = 'received' and provider in ('instantly', 'twilio')
       order by received_at, id limit ${limit}`) as unknown as InboundEvent[];
   }
 
@@ -595,12 +604,14 @@ export class Store {
     body: string; subject: string | null; classification: string; confidence: number; summary: string;
     suggested: string | null; url: string | null; by: 'ai' | null;
     answer?: string | null; answerStatus?: 'none' | 'draft' | 'approved'; bookingUrl?: string | null; replyTo?: string | null; account?: string | null;
+    channel?: 'email' | 'sms' | 'whatsapp';
   }) {
+    const channel = r.channel ?? 'email';
     await this.sql.begin(async (tx) => {
       const rows = await tx`
         insert into replies (workspace_id, lead_id, campaign_id, inbound_event_id, channel, body, subject, classification, confidence, summary,
                              suggested_response, conversation_url, answer, answer_status, booking_url, provider_email_id, email_account)
-        values (${workspaceId}::uuid, ${leadId}::uuid, ${campaignId}::uuid, ${eventId}::uuid, 'email', ${r.body}, ${r.subject}, ${r.classification},
+        values (${workspaceId}::uuid, ${leadId}::uuid, ${campaignId}::uuid, ${eventId}::uuid, ${channel}, ${r.body}, ${r.subject}, ${r.classification},
                 ${Math.round(r.confidence * 1000) / 1000}, ${r.summary}, ${r.suggested}, ${r.url}, ${r.answer ?? null}, ${r.answerStatus ?? 'none'},
                 ${r.bookingUrl ?? null}, ${r.replyTo ?? null}, ${r.account ?? null})
         on conflict (inbound_event_id) where inbound_event_id is not null do nothing
@@ -608,7 +619,7 @@ export class Store {
       if (!rows.length) return;
       await tx`
         insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
-        values (${workspaceId}::uuid, ${leadId}::uuid, 'reply', 'email', ${`Replied (${r.classification.replace(/_/g, ' ')}): ${r.summary}`.slice(0, 500)}, 'ai', 'replies', ${rows[0].id}::uuid)`;
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'reply', ${channel}, ${`Replied${channel === 'email' ? '' : channel === 'sms' ? ' by text' : ' on WhatsApp'} (${r.classification.replace(/_/g, ' ')}): ${r.summary}`.slice(0, 500)}, 'ai', 'replies', ${rows[0].id}::uuid)`;
     });
   }
 
@@ -622,14 +633,14 @@ export class Store {
 
   async approvedAnswers(workspaceId: string, campaignId: string, limit: number) {
     return (await this.sql`
-      select r.id, r.lead_id, r.answer, r.subject, r.provider_email_id, r.email_account, l.stage,
+      select r.id, r.lead_id, r.answer, r.subject, r.provider_email_id, r.email_account, l.stage, r.channel, l.phone, r.created_at,
              app.is_suppressed(l.workspace_id, l.email, l.phone) as suppressed,
              case when l.stage in ('new', 'contacted') then 'engaged' else l.stage end as lead_stage_after
       from replies r join leads l on l.workspace_id = r.workspace_id and l.id = r.lead_id
       where r.workspace_id = ${workspaceId}::uuid and r.campaign_id = ${campaignId}::uuid and r.answer_status = 'approved'
       order by r.created_at limit ${limit}`) as unknown as {
         id: string; lead_id: string; answer: string; subject: string | null; provider_email_id: string | null; email_account: string | null;
-        stage: string; suppressed: boolean; lead_stage_after: string;
+        stage: string; suppressed: boolean; lead_stage_after: string; channel: 'email' | 'sms' | 'whatsapp' | 'linkedin'; phone: string | null; created_at: Date | string;
       }[];
   }
 
@@ -643,11 +654,12 @@ export class Store {
     await this.sql`update replies set answer_status = ${status}, answer_error = ${error} where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid`;
   }
 
-  async answerSent(workspaceId: string, id: string, leadId: string, stage: string) {
+  async answerSent(workspaceId: string, id: string, leadId: string, stage: string, channel: 'email' | 'sms' | 'whatsapp' = 'email') {
     await this.sql.begin(async (tx) => {
       await tx`update replies set answer_status = 'sent', answer_error = null, answered_at = now(), handled_at = coalesce(handled_at, now()), handled_by = coalesce(handled_by, 'ai') where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid`;
       await tx`update leads set stage = ${stage}, stage_changed_at = now(), updated_at = now() where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid and stage <> ${stage}`;
-      await tx`insert into activities (workspace_id, lead_id, type, channel, summary, actor) values (${workspaceId}::uuid, ${leadId}::uuid, 'email', 'email', 'Answered the reply in the same email thread', 'ai')`;
+      await tx`insert into activities (workspace_id, lead_id, type, channel, summary, actor) values (${workspaceId}::uuid, ${leadId}::uuid, ${channel}, ${channel},
+        ${channel === 'email' ? 'Answered the reply in the same email thread' : channel === 'sms' ? 'Answered the text by SMS' : 'Answered the message on WhatsApp'}, 'ai')`;
     });
   }
 
@@ -671,10 +683,10 @@ export class Store {
 
   async leadById(workspaceId: string, id: string) {
     const rows = await this.sql`
-      select l.id, l.email, l.full_name, l.stage, c.name as company_name
+      select l.id, l.email, l.full_name, l.stage, l.phone, c.name as company_name
       from leads l left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
       where l.workspace_id = ${workspaceId}::uuid and l.id = ${id}::uuid`;
-    return (rows[0] ?? null) as { id: string; email: string; full_name: string | null; stage: string; company_name: string | null } | null;
+    return (rows[0] ?? null) as { id: string; email: string; full_name: string | null; stage: string; phone: string | null; company_name: string | null } | null;
   }
 
   /** Records a booking once; returns the meeting id when it is new. */
@@ -828,6 +840,144 @@ export class Store {
     });
   }
 
+  // ---------------------------------------------------------------- texts
+
+  async messagesToday(workspaceId: string, campaignId: string): Promise<number> {
+    const rows = await this.sql`
+      select count(*)::int n from messages where workspace_id = ${workspaceId}::uuid and campaign_id = ${campaignId}::uuid
+        and direction = 'outbound' and provider = 'twilio' and step is not null and created_at >= date_trunc('day', now())`;
+    return rows[0].n as number;
+  }
+
+  /**
+   * Leads who were emailed or called, have not answered on any channel, and are
+   * due a text: the last touch was at least `afterDays` ago and fewer than
+   * `maxMessages` follow-up texts went out.
+   */
+  async textableLeads(workspaceId: string, campaignId: string, channel: 'sms' | 'whatsapp', threshold: number, afterDays: number, maxMessages: number, limit: number) {
+    return (await this.sql`
+      with touches as (
+        select l.id,
+               (select max(e.sent_at) from emails e where e.workspace_id = l.workspace_id and e.lead_id = l.id and e.status = 'sent') as last_email,
+               (select max(k.created_at) from calls k where k.workspace_id = l.workspace_id and k.lead_id = l.id and k.direction = 'outbound') as last_call,
+               (select max(m.created_at) from messages m where m.workspace_id = l.workspace_id and m.lead_id = l.id and m.direction = 'outbound') as last_text,
+               (select count(*)::int from messages m where m.workspace_id = l.workspace_id and m.lead_id = l.id and m.direction = 'outbound'
+                  and m.campaign_id = ${campaignId}::uuid and m.channel = ${channel} and m.step is not null) as sent
+        from leads l
+        where l.workspace_id = ${workspaceId}::uuid and l.campaign_id = ${campaignId}::uuid
+          and l.stage in ('new', 'contacted') and l.score >= ${threshold}
+          and l.phone is not null and l.phone_checked_at is not null
+      )
+      select l.id, l.full_name, l.email, l.phone, l.phone_line_type, l.consent, c.name as company_name, l.ai_report, t.sent,
+             greatest(t.last_email, t.last_call, t.last_text) as last_touch_at,
+             app.is_suppressed(l.workspace_id, l.email, l.phone) as suppressed
+      from touches t
+      join leads l on l.workspace_id = ${workspaceId}::uuid and l.id = t.id
+      left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      where coalesce(t.last_email, t.last_call) is not null
+        and t.sent < ${maxMessages}
+        and greatest(t.last_email, t.last_call, t.last_text) < now() - make_interval(days => ${afterDays})
+        and not exists (select 1 from replies r where r.workspace_id = l.workspace_id and r.lead_id = l.id)
+        and not exists (select 1 from messages i where i.workspace_id = l.workspace_id and i.lead_id = l.id and i.direction = 'inbound')
+        and not exists (select 1 from calls d where d.workspace_id = l.workspace_id and d.lead_id = l.id
+                          and (d.outcome in ('interested', 'callback', 'not_interested', 'wrong_number', 'do_not_call', 'booked')
+                               or d.status in ('queued', 'ringing', 'in_progress')))
+      order by t.sent, l.score desc, l.created_at
+      limit ${limit}`) as unknown as import('./texting.ts').TextLead[];
+  }
+
+  async insertText(workspaceId: string, campaignId: string | null, leadId: string, m: {
+    channel: 'sms' | 'whatsapp'; body: string; template: string | null; to: string; from: string; step: number | null; basis: string | null; key: string;
+  }): Promise<string | null> {
+    const rows = await this.sql`
+      insert into messages (workspace_id, lead_id, campaign_id, channel, direction, body, template, delivery_status, provider, step,
+                            to_number, from_number, consent_basis, idempotency_key)
+      values (${workspaceId}::uuid, ${leadId}::uuid, ${campaignId}, ${m.channel}, 'outbound', ${m.body.slice(0, 2000)}, ${m.template}, 'queued', 'twilio',
+              ${m.step}, ${m.to}, ${m.from}, ${m.basis}, ${m.key})
+      on conflict (workspace_id, idempotency_key) do nothing
+      returning id`;
+    return rows[0]?.id ?? null;
+  }
+
+  async textSent(workspaceId: string, id: string, leadId: string, sid: string, summary: string, channel: 'sms' | 'whatsapp') {
+    await this.sql.begin(async (tx) => {
+      await tx`update messages set provider_message_id = ${sid}, sent_at = now() where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid`;
+      await tx`update leads set stage = 'contacted', stage_changed_at = now(), updated_at = now() where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid and stage = 'new'`;
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
+        values (${workspaceId}::uuid, ${leadId}::uuid, ${channel}, ${channel}, ${summary.slice(0, 500)}, 'ai', 'messages', ${id}::uuid)`;
+    });
+  }
+
+  async textFailed(workspaceId: string, id: string, error: string, code: string | null) {
+    await this.sql`update messages set delivery_status = 'failed', error = ${error.slice(0, 400)}, error_code = ${code} where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid`;
+  }
+
+  async textByProviderId(workspaceId: string, sid: string): Promise<{ id: string; lead_id: string; campaign_id: string | null; delivery_status: string } | null> {
+    const rows = await this.sql`select id, lead_id, campaign_id, delivery_status from messages where workspace_id = ${workspaceId}::uuid and provider = 'twilio' and provider_message_id = ${sid}`;
+    return (rows[0] ?? null) as { id: string; lead_id: string; campaign_id: string | null; delivery_status: string } | null;
+  }
+
+  /** Delivery updates only move forward: queued, sent, delivered, read; failures are final. */
+  async textStatus(workspaceId: string, id: string, status: 'sent' | 'delivered' | 'read' | 'failed', error: string | null, code: string | null) {
+    await this.sql`
+      update messages set delivery_status = ${status},
+        delivered_at = case when ${status} in ('delivered', 'read') then coalesce(delivered_at, now()) else delivered_at end,
+        error = case when ${status} = 'failed' then ${error} else error end,
+        error_code = case when ${status} = 'failed' then ${code} else error_code end
+      where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid
+        and delivery_status <> 'failed'
+        and (array_position(array['queued', 'sent', 'delivered', 'read'], ${status}) is null
+             or array_position(array['queued', 'sent', 'delivered', 'read'], ${status}) > array_position(array['queued', 'sent', 'delivered', 'read'], delivery_status))`;
+  }
+
+  /** The lead a text came from: the most recently contacted lead with that number. */
+  async leadByPhone(workspaceId: string, phone: string) {
+    const rows = await this.sql`
+      select l.id, l.email, l.full_name, l.stage, l.phone, l.campaign_id, c.name as company_name,
+             (select m.campaign_id from messages m where m.workspace_id = l.workspace_id and m.lead_id = l.id and m.direction = 'outbound'
+                and m.campaign_id is not null order by m.created_at desc limit 1) as texted_campaign
+      from leads l left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      where l.workspace_id = ${workspaceId}::uuid and l.phone = ${phone}
+      order by (select max(m.created_at) from messages m where m.workspace_id = l.workspace_id and m.lead_id = l.id) desc nulls last, l.updated_at desc
+      limit 1`;
+    return (rows[0] ?? null) as {
+      id: string; email: string | null; full_name: string | null; stage: string; phone: string; campaign_id: string | null;
+      company_name: string | null; texted_campaign: string | null;
+    } | null;
+  }
+
+  async recordInboundText(workspaceId: string, leadId: string, campaignId: string | null, channel: 'sms' | 'whatsapp', body: string, sid: string, from: string): Promise<boolean> {
+    const rows = await this.sql`
+      insert into messages (workspace_id, lead_id, campaign_id, channel, direction, body, delivery_status, provider, provider_message_id, from_number, idempotency_key, sent_at)
+      values (${workspaceId}::uuid, ${leadId}::uuid, ${campaignId}, ${channel}, 'inbound', ${body.slice(0, 2000)}, 'received', 'twilio', ${sid}, ${from},
+              ${`twilio:${sid}`}, now())
+      on conflict (workspace_id, idempotency_key) do nothing
+      returning id`;
+    return rows.length === 1;
+  }
+
+  /** The prospect asked to stop by text: suppressed on every channel. */
+  async textOptOut(workspaceId: string, leadId: string, phone: string | null, why: string, channel: 'sms' | 'whatsapp') {
+    await this.sql.begin(async (tx) => {
+      const leads = await tx`select email, phone from leads where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid`;
+      const email = leads[0]?.email as string | null | undefined;
+      const number = phone ?? (leads[0]?.phone as string | null | undefined) ?? null;
+      if (number) {
+        await tx`insert into suppressions (workspace_id, kind, value, reason, created_by) values (${workspaceId}::uuid, 'phone', ${number.trim()}, 'unsubscribed', null) on conflict (workspace_id, kind, value) do nothing`;
+      }
+      if (email) {
+        await tx`insert into suppressions (workspace_id, kind, value, reason, created_by) values (${workspaceId}::uuid, 'email', ${email.toLowerCase().trim()}, 'unsubscribed', null) on conflict (workspace_id, kind, value) do nothing`;
+      }
+      await tx`update emails set status = 'cancelled' where workspace_id = ${workspaceId}::uuid and lead_id = ${leadId}::uuid and status in ('queued', 'approved', 'draft')`;
+      await tx`update replies set answer_status = 'failed', answer_error = 'The lead asked not to be contacted' where workspace_id = ${workspaceId}::uuid and lead_id = ${leadId}::uuid and answer_status in ('draft', 'approved')`;
+      await tx`update leads set stage = 'do_not_contact', stage_changed_at = now(), updated_at = now() where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid and stage <> 'do_not_contact'`;
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor)
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'status_change', ${channel}, ${`${why}: suppressed on every channel`.slice(0, 500)}, 'system')`;
+    });
+  }
+
   async slackChannel(workspaceId: string): Promise<string | null> {
     const rows = await this.sql`select slack_channel from workspaces where id = ${workspaceId}::uuid`;
     return rows[0]?.slack_channel ?? null;
@@ -858,7 +1008,7 @@ export const SOURCE_LABELS: Record<LeadCandidate['source'], string> = {
   inbound_call: 'an inbound call', manual: 'manual entry',
 };
 
-export type InboundEvent = { id: string; event_type: string; lead_email: string | null; payload: Record<string, unknown> };
+export type InboundEvent = { id: string; provider?: string; event_type: string; lead_email: string | null; payload: Record<string, unknown> };
 
 export type ReadySequence = {
   lead_id: string; email: string; full_name: string | null; title: string | null; company_name: string; domain: string | null;

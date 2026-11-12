@@ -153,24 +153,27 @@ export async function setCallConsent(_prev: FormState, form: FormData): Promise<
   const workspaceId = workspaceIdFrom(form);
   const leadId = uuidSchema.safeParse(form.get('lead_id'));
   const basis = String(form.get('basis') ?? '');
+  const channel = String(form.get('channel') ?? 'voice');
   if (!workspaceId || !leadId.success) return { error: 'Lead not found.' };
+  if (channel !== 'voice' && channel !== 'sms' && channel !== 'whatsapp') return { error: 'Unknown channel.' };
   if (basis !== 'withdraw' && !CONSENT.includes(basis)) return { error: 'Choose the consent basis.' };
   const { supabase, user } = await requireUser();
   const { data: lead } = await supabase.from('leads').select('consent').eq('workspace_id', workspaceId).eq('id', leadId.data).maybeSingle();
   if (!lead) return { error: 'Lead not found.' };
   const consent = { ...((lead.consent as Record<string, unknown>) ?? {}) };
   if (basis === 'withdraw') {
-    delete consent.voice;
-    consent.voice_withdrawn_at = new Date().toISOString();
-    consent.voice_withdrawn_by = user.id;
+    delete consent[channel];
+    consent[`${channel}_withdrawn_at`] = new Date().toISOString();
+    consent[`${channel}_withdrawn_by`] = user.id;
   } else {
-    consent.voice = basis;
-    consent.voice_recorded_at = new Date().toISOString();
-    consent.voice_recorded_by = user.id;
+    consent[channel] = basis;
+    consent[`${channel}_recorded_at`] = new Date().toISOString();
+    consent[`${channel}_recorded_by`] = user.id;
   }
   const { data, error } = await supabase.from('leads').update({ consent }).eq('workspace_id', workspaceId).eq('id', leadId.data).select('id');
   if (error) return { error: friendlyDbError(error) };
   if (!data?.length) return { error: NO_PERMISSION };
   revalidatePath(`/w/${workspaceId}/leads/${leadId.data}`);
-  return { notice: basis === 'withdraw' ? 'Consent removed. This lead will not be called.' : 'Consent recorded. The AI caller may call this lead.' };
+  const what = channel === 'voice' ? 'called' : channel === 'sms' ? 'sent SMS follow-ups' : 'sent WhatsApp follow-ups';
+  return { notice: basis === 'withdraw' ? `Consent removed. This lead will not be ${what}.` : `Consent recorded. This lead may be ${what}.` };
 }
