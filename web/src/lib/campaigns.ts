@@ -110,7 +110,7 @@ export function filtersToQuery(f: LeadFilters, overrides: Partial<LeadFilters> =
   return s ? `?${s}` : '';
 }
 
-export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails' };
+export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies' };
 
 export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach'] as const;
 export type JobType = (typeof JOB_TYPES)[number];
@@ -135,6 +135,14 @@ export function describeJobResult(type: string, status: string, result: unknown,
     const n = num(r.leads_written);
     if (!n && !num(r.failed)) return 'No new qualified leads to write to.';
     return `${plural(n, 'email sequence')} written${r.waiting_for_approval === true ? ', waiting for approval' : ' and approved'}${num(r.failed) ? `; ${num(r.failed)} could not be written and will be retried` : ''}.`;
+  }
+  if (type === 'reply_handling') {
+    const parts: string[] = [];
+    if (num(r.replies)) parts.push(`${plural(num(r.replies), 'reply', 'replies')} read: ${num(r.hot)} need${num(r.hot) === 1 ? 's' : ''} you, ${num(r.unsubscribed)} unsubscribed`);
+    if (num(r.bounced)) parts.push(plural(num(r.bounced), 'bounce'));
+    if (num(r.sent)) parts.push(`${plural(num(r.sent), 'email')} sent`);
+    const line = parts.length ? `${parts.join('; ')}.` : 'No new replies.';
+    return typeof r.alert_error === 'string' ? `${line} Slack alert failed: ${r.alert_error}` : line;
   }
   if (type === 'email_outreach') {
     if (r.action === 'sending') return `${plural(num(r.leads_added), 'lead')} added to Instantly today (daily limit ${num(r.daily_limit)}).`;

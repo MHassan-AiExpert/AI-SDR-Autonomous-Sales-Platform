@@ -6,6 +6,7 @@ export type Config = {
   port: number;
   jobsPerRun: number;
   scheduleHours: number;
+  appUrl?: string;
   models: { openai: string; anthropic: string | null; gemini: string };
 };
 
@@ -20,6 +21,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: Number(env.PORT ?? 8080),
     jobsPerRun: Math.min(Math.max(Number(env.JOBS_PER_RUN ?? 3), 1), 20),
     // Hours between automatic sourcing runs per active campaign; 0 turns it off
+    // Links in Slack alerts point here, for example https://app.example.com
+    appUrl: /^https?:\/\/[^\s/]+$/.test(env.PUBLIC_APP_URL ?? '') ? env.PUBLIC_APP_URL : undefined,
     scheduleHours: Math.min(Math.max(Number(env.SCHEDULE_HOURS ?? 24) || 0, 0), 168),
     models: {
       openai: env.OPENAI_MODEL || 'gpt-4.1-mini',

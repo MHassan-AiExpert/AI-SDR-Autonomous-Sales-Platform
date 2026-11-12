@@ -199,3 +199,18 @@ test('INF-21 the importer rejects bad files and publishes only active workflows'
   }
   assert.deepEqual(planImport(dir()).commands, []);
 });
+
+test('INF-22 the Instantly events workflow receives per-workspace webhooks and forwards them signed', () => {
+  const wf = JSON.parse(readFileSync(new URL('infra/n8n/workflows/instantly-events.json', root), 'utf8'));
+  const hook = wf.nodes.find((n) => n.type === 'n8n-nodes-base.webhook').parameters;
+  assert.equal(hook.httpMethod, 'POST');
+  assert.equal(hook.path, 'instantly/:token');
+  assert.equal(hook.responseMode, 'onReceived');
+  const code = wf.nodes.find((n) => n.type === 'n8n-nodes-base.code').parameters.jsCode;
+  assert.match(code, /item\.json\.params\?\.token/);
+  assert.match(code, /createHmac\('sha256', \$env\.PLATFORM_HMAC_SECRET\)/);
+  const http = wf.nodes.find((n) => n.type === 'n8n-nodes-base.httpRequest').parameters;
+  assert.match(http.url, /\$env\.AGENT_SERVICE_URL.*\/webhooks\/instantly/);
+  assert.equal(wf.active, true);
+  assert.equal(wf.settings.saveDataSuccessExecution, 'none');
+});

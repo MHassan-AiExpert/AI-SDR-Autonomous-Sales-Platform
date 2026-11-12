@@ -170,6 +170,8 @@ services:
       JOBS_PER_RUN: ${AGENT_JOBS_PER_RUN:-3}
       # Hours between automatic sourcing and enrichment runs per active campaign (0 = off)
       SCHEDULE_HOURS: ${AGENT_SCHEDULE_HOURS:-24}
+      # Web app address, used for links in Slack alerts
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-}

@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { requireWorkspace } from '@/lib/session';
 import { uuidSchema } from '@/lib/validation';
 import { EMAIL_STATUS_LABELS } from '@/lib/outreach';
+import { REPLY_LABELS, replyBadge, safeConversationUrl, type ReplyClass } from '@/lib/replies';
 import { LINE_TYPE_LABELS, SOURCE_LABELS, STAGE_LABELS, VERIFICATION_LABELS, readLeadReport, type LeadSource, type LeadStage, type VerificationStatus } from '@/lib/campaigns';
 
 export const metadata: Metadata = { title: 'Lead' };
@@ -38,6 +39,13 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
     .eq('workspace_id', workspace.id)
     .eq('lead_id', lead.id)
     .order('step');
+  const { data: replies } = await supabase
+    .from('replies')
+    .select('id, body, classification, summary, suggested_response, conversation_url, created_at')
+    .eq('workspace_id', workspace.id)
+    .eq('lead_id', lead.id)
+    .order('created_at', { ascending: false })
+    .limit(20);
   const { data: activities } = await supabase
     .from('activities')
     .select('id, type, channel, summary, actor, created_at')
@@ -120,6 +128,24 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
             {sequence[0]?.campaign_id ? <p><Link href={`${base}/campaigns/${sequence[0].campaign_id}/emails?status=${sequence[0].status === 'queued' ? 'queued' : sequence[0].status}`}>Review in the campaign</Link></p> : null}
           </>
         )}
+      </section>
+
+      <section className="card stack" aria-labelledby="replies">
+        <h2 id="replies">Replies</h2>
+        {!replies?.length ? <p className="muted">No replies yet.</p> : replies.map((r) => {
+          const url = safeConversationUrl(r.conversation_url);
+          return (
+            <article key={r.id} className="stack">
+              <div className="spread">
+                <strong>{r.summary ?? 'Reply'}</strong>
+                <span className={`badge badge-${replyBadge(r.classification)}`}>{r.classification ? REPLY_LABELS[r.classification as ReplyClass] ?? r.classification : 'Unread'}</span>
+              </div>
+              <blockquote className="pre">{r.body}</blockquote>
+              {r.suggested_response ? <details><summary>Suggested reply</summary><p className="pre">{r.suggested_response}</p></details> : null}
+              {url ? <a href={url} target="_blank" rel="noopener noreferrer">Answer in Instantly</a> : null}
+            </article>
+          );
+        })}
       </section>
 
       <section className="card stack" aria-labelledby="timeline">

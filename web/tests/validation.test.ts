@@ -88,7 +88,19 @@ describe('settings form', () => {
     expect(parseSettingsForm(form({ ...base, automation_mode: 'yolo' })).success).toBe(false);
     const r = parseSettingsForm(form({ ...base, outreach_paused: 'true', plan: 'enterprise', created_by: 'x' }));
     expect(r.success).toBe(true);
-    if (r.success) expect(Object.keys(r.data).sort()).toEqual(['ai_closer_enabled', 'automation_mode', 'enabled_channels', 'name']);
+    if (r.success) expect(Object.keys(r.data).sort()).toEqual(['ai_closer_enabled', 'automation_mode', 'enabled_channels', 'name', 'slack_channel']);
+  });
+});
+
+describe('alert channel', () => {
+  const base = { name: 'Acme', automation_mode: 'autopilot' };
+  it('WEB-25 a Slack channel name or ID is accepted; empty means no alerts', () => {
+    const ok = (v: string) => { const r = parseSettingsForm(form({ ...base, slack_channel: v })); return r.success ? r.data.slack_channel : 'error'; };
+    expect(ok('#Sales-Alerts')).toBe('#sales-alerts');
+    expect(ok('C0123ABCD45')).toBe('C0123ABCD45');
+    expect(ok('  ')).toBeNull();
+    expect(ok('sales alerts')).toBe('error');
+    expect(ok('#a b')).toBe('error');
   });
 });
 

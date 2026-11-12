@@ -3,14 +3,19 @@ import { ActionForm, SubmitButton } from '@/components/action-form';
 import { canManageSettings } from '@/lib/roles';
 import { requireWorkspace } from '@/lib/session';
 import { CHANNELS, CHANNEL_LABELS } from '@/lib/validation';
-import { updateSettings } from '../actions';
+import { rotateWebhookToken, updateSettings } from '../actions';
 
 export const metadata: Metadata = { title: 'Settings' };
 
 export default async function SettingsPage({ params }: { params: Promise<{ workspaceId: string }> }) {
   const { workspaceId } = await params;
-  const { workspace } = await requireWorkspace(workspaceId);
+  const { supabase, workspace } = await requireWorkspace(workspaceId);
   const manage = canManageSettings(workspace.role);
+  const { data: extra } = await supabase.from('workspaces').select('slack_channel').eq('id', workspace.id).maybeSingle();
+  // The webhook address is a secret; only owners and admins see it
+  const { data: hook } = manage ? await supabase.from('workspaces').select('webhook_token').eq('id', workspace.id).maybeSingle() : { data: null };
+  const hookBase = (process.env.NEXT_PUBLIC_WEBHOOK_BASE_URL ?? '').replace(/\/$/, '');
+  const hookUrl = hook?.webhook_token && hookBase ? `${hookBase}/webhook/instantly/${hook.webhook_token}` : null;
 
   return (
     <>
@@ -53,8 +58,29 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
           ))}
         </fieldset>
 
+        <fieldset className="card stack" disabled={!manage}>
+          <legend>Team alerts</legend>
+          <p className="muted">Hot replies (interested, questions, referrals) and mailbox problems are posted to this Slack channel. Invite the Slack app to the channel first.</p>
+          <label className="field">
+            <span>Slack channel</span>
+            <input name="slack_channel" type="text" maxLength={81} placeholder="#sales-alerts" defaultValue={extra?.slack_channel ?? ''} />
+          </label>
+        </fieldset>
+
         {manage ? <SubmitButton>Save settings</SubmitButton> : null}
       </ActionForm>
+
+      {manage ? (
+        <section className="card stack" aria-labelledby="webhook">
+          <h2 id="webhook">Instantly webhook</h2>
+          <p className="muted">So replies, bounces and unsubscribes reach the AI reply agent, add a webhook in Instantly (Settings, Integrations, Webhooks) with this address and select all events. Keep it private: anyone with it can send events to this workspace.</p>
+          {hookUrl ? <code className="pre">{hookUrl}</code> : <p className="muted">Set NEXT_PUBLIC_WEBHOOK_BASE_URL to the public address of your n8n instance to show the webhook address.</p>}
+          <ActionForm action={rotateWebhookToken}>
+            <input type="hidden" name="workspace_id" value={workspace.id} />
+            <SubmitButton variant="secondary">Create a new address</SubmitButton>
+          </ActionForm>
+        </section>
+      ) : null}
     </>
   );
 }

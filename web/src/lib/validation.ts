@@ -60,6 +60,9 @@ export const settingsSchema = z.object({
     whatsapp: z.boolean(),
     linkedin: z.boolean(),
   }),
+  slack_channel: z.string().trim()
+    .transform((v) => (v === '' ? null : v.startsWith('#') ? v.toLowerCase() : v))
+    .pipe(z.string().regex(/^(#[a-z0-9._-]{1,80}|[CGD][A-Z0-9]{8,12})$/, 'Use a Slack channel like #sales-alerts or a channel ID').nullable()),
 });
 export type SettingsInput = z.infer<typeof settingsSchema>;
 
@@ -70,6 +73,7 @@ export function parseSettingsForm(form: FormData) {
     automation_mode: form.get('automation_mode') ?? '',
     ai_closer_enabled: form.get('ai_closer_enabled') === 'on',
     enabled_channels: Object.fromEntries(CHANNELS.map((c) => [c, form.get(`channel_${c}`) === 'on'])),
+    slack_channel: form.get('slack_channel') ?? '',
   });
 }
 

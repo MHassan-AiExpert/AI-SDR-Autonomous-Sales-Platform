@@ -101,3 +101,28 @@ export async function removeMember(_prev: FormState, form: FormData): Promise<Fo
   revalidatePath(`/w/${workspaceId}/members`);
   return { notice: 'Member removed.' };
 }
+
+export async function rotateWebhookToken(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  if (!workspaceId) return { error: 'Workspace not found.' };
+  const { supabase } = await requireUser();
+  const { error } = await supabase.rpc('workspace_rotate_webhook_token', { ws: workspaceId });
+  if (error) return { error: friendlyDbError(error, NO_PERMISSION) };
+  revalidatePath(`/w/${workspaceId}/settings`);
+  return { notice: 'New webhook address created. Update it in Instantly; the old one no longer works.' };
+}
+
+export async function markReplyHandled(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  const replyId = uuidSchema.safeParse(form.get('reply_id'));
+  const reopen = form.get('reopen') === 'true';
+  if (!workspaceId || !replyId.success) return { error: 'Reply not found.' };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('replies')
+    .update(reopen ? { handled_at: null, handled_by: null } : { handled_at: new Date().toISOString(), handled_by: 'human' })
+    .eq('workspace_id', workspaceId).eq('id', replyId.data).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${workspaceId}/inbox`);
+  return { notice: reopen ? 'Moved back to the inbox.' : 'Marked as handled.' };
+}
