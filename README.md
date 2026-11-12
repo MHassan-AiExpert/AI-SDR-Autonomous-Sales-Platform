@@ -232,6 +232,9 @@ Every module, with its numbered functional requirements, is defined in the [Soft
 | Meetings | Zoom API, Recall.ai meeting bot, Calendly |
 | Deals | PandaDoc (e-signature), Stripe (payments) |
 | CRM and alerts | HubSpot, Slack |
+| Auth, pooling and cache | Supabase Auth, Supavisor, Redis (Upstash) |
+| Observability | Better Stack (uptime, logs, on-call), Sentry, Langfuse |
+| Delivery | GitHub Actions, Docker Compose, Vercel, Cloudflare |
 
 ---
 
@@ -256,6 +259,39 @@ erDiagram
 ```
 
 Field-level definitions for every entity are in the [SRS](docs/SRS.md#7-data-model-core-entities).
+
+---
+
+## Production Readiness
+
+The platform targets **99.9% uptime**, recovers from a bad release in one click, and keeps running through third-party outages.
+
+```mermaid
+flowchart LR
+    subgraph SIG["Signals"]
+        U["Uptime checks<br/>every 60 s, multi-region"]
+        H["Health endpoints<br/>DB, Redis, n8n, queues"]
+        ER["Error tracking<br/>Sentry, n8n error flow"]
+        LG["Central logs<br/>JSON, correlation ID"]
+        LT["LLM traces<br/>Langfuse cost, latency"]
+        VS["Vendor status<br/>status pages, error rate"]
+    end
+    AR["Alert router<br/>P1: phone, SMS, Slack<br/>P2: Slack in 5 min<br/>P3: daily digest"]
+    SIG --> AR
+    AR --> PG["Page on-call, notify<br/>runbook, then postmortem"]
+    AR --> CB["Circuit breaker, failover<br/>pause, queue or switch vendor"]
+    AR --> RB["One-click rollback<br/>app, containers, n8n, prompts"]
+```
+
+- **Authentication:** Supabase Auth with MFA, Google and Microsoft sign-in, SAML SSO, short-lived tokens with rotating refresh, role-based access enforced by row-level security, signed webhooks and an audit log
+- **Connection pooling and queues:** Supavisor transaction pooling, read replica for analytics, n8n queue mode on Redis with prioritized workers, dead-letter queue and idempotency keys
+- **Caching:** Redis with per-workspace keys and defined TTLs (research and enrichment 30 days, DNC checks 31 days, audits 7 days, LLM discovery 24 hours, calendar availability 60 seconds)
+- **Monitoring:** multi-region uptime checks every 60 seconds, `/health` and `/ready` endpoints, integration health checks, daily synthetic end-to-end test
+- **Error tracking and logging:** Sentry, structured JSON logs with a per-lead correlation ID in one central store, Langfuse for LLM cost and quality
+- **Alerts:** P1 to P3 severity routing to phone, SMS and Slack, with deduplication, on-call routing, runbooks and postmortems
+- **Third-party outages:** vendor status monitoring, circuit breakers, automatic failover (OpenAI to Anthropic to Gemini, Vapi to Retell AI, Twilio to Telnyx) and automatic resume
+- **Recovery:** one-click rollback for the web app, containers, n8n workflows and prompts; backward-compatible migrations; feature flags; point-in-time recovery with RPO 15 minutes and RTO 1 hour
+- **Security:** HTTPS with HSTS and CSP, WAF and DDoS protection, secrets manager, dependency and code scanning, penetration test, data retention and GDPR tools
 
 ---
 
@@ -285,7 +321,7 @@ AI-SDR-Autonomous-Sales-Platform/
 
 ## Documentation
 
-- **[Software Requirements Specification](docs/SRS.md):** scope, users and roles, architecture, end-to-end flow, all functional requirements (M1–M26), data model, integrations, non-functional requirements, compliance, build phases and acceptance criteria
+- **[Software Requirements Specification](docs/SRS.md):** scope, users and roles, architecture, end-to-end flow, all functional requirements (M1–M26), data model, integrations, non-functional requirements, production infrastructure and operations, compliance, build phases and acceptance criteria
 
 ---
 

@@ -454,6 +454,24 @@ Final tools are confirmed in discovery based on budget and the client's existing
 | Notifications | Slack | Email, mobile push |
 | Dashboard | Built into the web app | Looker Studio, Metabase |
 
+**Operations stack**
+
+| Layer | Recommended | Alternatives |
+| --- | --- | --- |
+| Authentication | Supabase Auth (MFA, SSO, SAML) | Clerk, Auth0 |
+| Connection pooling | Supabase Supavisor | PgBouncer |
+| Cache and job queue | Redis (Upstash) with n8n queue mode | Self-hosted Redis |
+| Uptime monitoring and status page | Better Stack Uptime | UptimeRobot |
+| Error tracking | Sentry | Rollbar |
+| Central logging | Better Stack Logs | Grafana Loki, Datadog |
+| LLM observability | Langfuse | Helicone |
+| Alerting and on-call | Better Stack On-call + Slack | PagerDuty, Opsgenie |
+| CI/CD | GitHub Actions | GitLab CI |
+| Hosting | Vercel (web app), Docker on a VPS (n8n, Redis) | Railway, Kubernetes |
+| Firewall and DDoS | Cloudflare | Vercel Firewall |
+| Secrets | Supabase Vault + environment variables | Doppler, AWS Secrets Manager |
+| Backups | Supabase point-in-time recovery + object storage versioning | Scheduled pg_dump to S3 |
+
 ## 9. Non-functional requirements
 
 - **Multi-tenancy:** Each workspace's data, playbook, recordings and credentials are fully isolated (row-level security); one workspace can never see another's data.
@@ -464,9 +482,124 @@ Final tools are confirmed in discovery based on budget and the client's existing
 - **Security:** Credentials encrypted per workspace; recordings and transcripts stored encrypted with role-based access; no card data stored (payments run through Stripe).
 - **Cost control:** LLM calls use the cheapest model that meets quality; research is cached per company; daily caps on call minutes and message volume per workspace.
 - **Maintainability:** Modular workflows (one per module), named and documented; prompts, scripts and playbooks stored as editable, versioned templates.
-- **Observability:** Full run logs, error alerts and a health view of every integration per workspace.
+- **Observability:** Uptime checks, health endpoints, error tracking, central logging, tiered alerts and third-party outage monitoring, as defined in section 10.
 
-## 10. Compliance and deliverability
+## 10. Production infrastructure, reliability and operations
+
+The platform targets 99.9% uptime for the web app and API, recovers from any bad release in one click, and keeps working through third-party outages by pausing or failing over the affected channel. Production readiness is built in from Phase 2, not added at the end.
+
+**10.1 Authentication and access control**
+
+- Supabase Auth for sign-in: email and password, magic link, and Google or Microsoft sign-in; SAML SSO available for enterprise and white-label agencies.
+- Multi-factor authentication (authenticator app) required for workspace owners, admins and agency staff.
+- Short-lived access tokens (1 hour) with rotating refresh tokens; sessions can be revoked per user or per workspace.
+- Role-based access per workspace (owner, admin, rep, viewer) and per agency, enforced in both the API and the database through row-level security.
+- Calls between the web app and n8n use signed requests (HMAC) and scoped, rotatable per-workspace API keys.
+- Every inbound webhook (Twilio, Vapi, Instantly, WhatsApp, Zoom, Stripe, PandaDoc) is verified by signature before it is processed.
+- OAuth tokens for connected tools are encrypted at rest (Supabase Vault) and refreshed automatically before they expire.
+- Rate limits on sign-in, password reset and API routes per user and per IP, with lockout after repeated failures.
+- An audit log records sign-ins, role changes, settings and channel toggles, playbook edits, exports and deletions.
+
+**10.2 Database, connection pooling and queues**
+
+- All application and n8n traffic goes through the Supabase connection pooler (Supavisor) in transaction mode, with a fixed pool size per service so serverless spikes cannot exhaust database connections.
+- Long-running jobs and migrations use a separate direct connection.
+- Indexes on workspace id plus each hot filter (stage, owner, next follow-up date, source channel); activity, message and log tables are partitioned by month.
+- A read replica serves dashboards and reports so analytics never slow down live outreach.
+- n8n runs in queue mode with Redis and several workers, so load is spread and one stuck job cannot block others.
+- Job priorities: live calls, inbound replies and handoffs first; outreach sends next; bulk scraping and enrichment last.
+- Per-tool rate limiting and backoff respect each vendor's API limits; failed jobs retry with exponential backoff and then move to a dead-letter queue for review.
+- Idempotency keys on every send, call and record write, so retries never duplicate anything.
+
+**10.3 Caching and TTLs**
+
+Redis (Upstash) caches expensive lookups. Every key is namespaced by workspace, and cached data is refreshed when its TTL ends.
+
+| Cached data | TTL |
+| --- | --- |
+| Company research brief | 30 days |
+| Enrichment results | 30 days |
+| Email verification result | 30 days (re-verified before send if older) |
+| Do Not Call registry check | 31 days (US rule for re-scrubbing) |
+| Website audit and PageSpeed results | 7 days |
+| Google Maps and social media scrape results | 7 days |
+| LLM lead-discovery results per niche and area | 24 hours |
+| Dashboard aggregates | 5 minutes |
+| Feature flags and workspace settings | 5 minutes, cleared on change |
+| Calendar availability | 60 seconds |
+| Playbook embeddings | Until the playbook version changes |
+
+**10.4 Uptime monitoring and health checks**
+
+- External uptime checks every 60 seconds from several regions on the web app, API, n8n, webhook endpoints and public audit and proposal pages, with a public status page.
+- Liveness endpoint (`/health`) and readiness endpoint (`/ready`) that checks the database, Redis, n8n and queue depth.
+- Integration health checks every 15 minutes per workspace: token valid, credits remaining, quota left, sending domains healthy.
+- Synthetic end-to-end test every day: a seed lead runs from enrichment to outreach to a booked test meeting, and a test call checks the voice agents.
+
+**10.5 Error tracking, central logging and LLM observability**
+
+- Sentry captures errors from the web app, API and custom services with the release version, workspace, user and lead attached.
+- An n8n error workflow forwards every failed execution to Sentry and the central log with the workflow name, step and lead.
+- All services write structured JSON logs with a correlation ID that follows one lead's journey across sourcing, outreach, calls and closing.
+- Logs are shipped to one central store (Better Stack Logs or Grafana Loki), kept searchable for 30 days and archived for 1 year, with personal data redacted.
+- Metrics dashboards: queue depth and latency, error rates, LLM cost and latency, call connect rates, bounce rates and delivery rates.
+- Langfuse traces every LLM call: prompt version, tokens, cost, latency and quality scores, which also feeds the self-learning loop (M24).
+
+**10.6 Alerts and incident response**
+
+- P1 (platform or API down, calls failing everywhere, possible data exposure): phone and SMS page plus Slack, immediately.
+- P2 (one integration down, bounce or spam spike, queue backlog over 15 minutes, error rate over threshold): Slack within 5 minutes.
+- P3 (low credits, slow trends, warnings): daily digest.
+- Alerts are deduplicated and routed to an on-call person; platform alerts go to us, workspace alerts (token expired, credits low) go to that company.
+- Every incident follows a runbook and ends with a short postmortem.
+
+**10.7 Third-party outage monitoring and failover**
+
+- The platform watches the status pages of every vendor (Twilio, Vapi, OpenAI, Anthropic, Gemini, Instantly, Apify, Apollo, Meta WhatsApp, Zoom, Stripe, HubSpot) and tracks its own error rate per vendor.
+- A circuit breaker opens when a vendor fails repeatedly: work for that channel is paused and queued instead of failing.
+- Failover where a backup is configured: LLM calls move from OpenAI to Anthropic to Gemini; voice from Vapi to Retell AI; SMS from Twilio to Telnyx.
+- Channels resume automatically when the vendor recovers, and affected workspaces are notified in the app and on Slack.
+
+**10.8 Deployment, one-click rollback and disaster recovery**
+
+- Three environments: development, staging and production, plus a preview deployment for every pull request.
+- CI/CD with GitHub Actions: lint, tests, build and migration checks; staging deploys automatically, production is promoted after checks pass.
+- The full stack (n8n main and workers, Redis, supporting services) is defined with Docker Compose, and the web app deploys on Vercel.
+- One-click rollback for every layer: web app to the previous Vercel deployment; containers to the previous pinned image tag; n8n workflows to the previous version stored in Git; prompts, scripts and playbooks to the previous version from the admin panel.
+- Database migrations are backward-compatible (expand, then contract), so a code rollback never breaks the schema.
+- Feature flags gate risky changes (new closer pitch, new prompt version) per workspace, with an instant off switch.
+- Point-in-time database recovery for 7 days, daily snapshots kept for 30 days, and versioned object storage for recordings and documents.
+- Recovery targets: RPO 15 minutes and RTO 1 hour, tested with a restore drill every quarter.
+- Maintenance mode drains queues safely before planned work.
+
+**10.9 Application security**
+
+- HTTPS everywhere with HSTS, a strict content security policy and secure cookies.
+- Web application firewall and DDoS protection in front of the app and webhooks.
+- Secrets live in a secrets manager and environment variables, never in workflow JSON or the repository.
+- Automated dependency and code scanning on every pull request, and an external penetration test before launch.
+- Data retention per workspace (call recordings 90 days by default, configurable), plus GDPR export and delete-on-request tools.
+
+```mermaid
+flowchart LR
+    subgraph SIG["Signals"]
+        U["Uptime checks<br/>every 60 s, multi-region"]
+        H["Health endpoints<br/>DB, Redis, n8n, queues"]
+        ER["Error tracking<br/>Sentry, n8n error flow"]
+        LG["Central logs<br/>JSON, correlation ID"]
+        LT["LLM traces<br/>Langfuse cost, latency"]
+        VS["Vendor status<br/>status pages, error rate"]
+    end
+    AR["Alert router<br/>P1: phone, SMS, Slack<br/>P2: Slack in 5 min<br/>P3: daily digest"]
+    SIG --> AR
+    AR --> PG["Page on-call, notify<br/>runbook, then postmortem"]
+    AR --> CB["Circuit breaker, failover<br/>pause, queue or switch vendor"]
+    AR --> RB["One-click rollback<br/>app, containers, n8n, prompts"]
+```
+
+All six signal sources feed one alert router; each alert ends in a page to the on-call person, a vendor failover, or a one-click rollback.
+
+## 11. Compliance and deliverability
 
 **Email**
 
@@ -514,7 +647,7 @@ Final tools are confirmed in discovery based on budget and the client's existing
 - The receptionist states it is an AI assistant and gives a recording disclosure where required.
 - Self-learning changes only wording, timing and order; prices, guarantees, compliance wording and playbook limits never change automatically.
 
-## 11. Assumptions, constraints and dependencies
+## 12. Assumptions, constraints and dependencies
 
 - Each company connects its own tool accounts through the guided onboarding: data provider, scrapers, email platform, voice agent, Twilio, WhatsApp Business, Zoom, calendar, CRM, Slack, e-signature, payments and LLM API.
 - Each company pays for its own subscriptions, API credits, domains, mailboxes, phone numbers, call minutes, messages and registration fees.
@@ -526,12 +659,12 @@ Final tools are confirmed in discovery based on budget and the client's existing
 - LinkedIn automation carries platform risk and is optional.
 - Results (reply, connect, meeting and close rates) depend on the offer, market and list quality, so the system guarantees function, not sales outcomes.
 
-## 12. Build phases
+## 13. Build phases
 
 Each phase ends with a client review before the next begins. Timeline is set once tools and volume are confirmed.
 
 1. **Discovery and system design:** Confirm channels, target countries, tools and volume; finalize architecture, data model, prompts, scripts and playbook format. Covers M1.
-2. **Platform foundation:** Multi-tenant workspaces, white-label mode, web app, roles, guided onboarding wizard and integration health checks. Covers M21, M23 and M26.
+2. **Platform foundation:** Multi-tenant workspaces, white-label mode, web app, authentication and roles, guided onboarding wizard, connection pooling, Redis cache and queues, CI/CD with one-click rollback, uptime monitoring, error tracking and central logging. Covers M21, M23, M26 and section 10.
 3. **Data layer:** Lead sourcing (B2B databases, Google Maps, social media, LLM discovery), enrichment, email and phone verification, DNC screening, deduplication and suppression. Covers M2 and M3.
 4. **AI layer:** AI setup agent, playbook knowledge base, research briefs, lead scoring, copy generation, and audit report and proposal generation. Covers M4, M5, M14, M16 and M19.
 5. **Outreach layer:** Designed emails, omnichannel cadences, mailbox and number rotation, channel rules and stop rules. Covers M6.
@@ -539,10 +672,10 @@ Each phase ends with a client review before the next begins. Timeline is set onc
 7. **Conversation and booking layer:** Reply and call-outcome capture, classification, auto-responses, escalation, Zoom booking, reminders and no-show recovery. Covers M7 and M8.
 8. **Closing layer:** AI closer agent, deal briefs, Zoom meeting bot, human handoff, deal pipeline, agreements, payments and sales records. Covers M18 and M20.
 9. **Lead management, CRM, reporting and monitoring:** Lead profiles, AI lead reports, source categorization, activity timelines and follow-up tracking, self-learning loop, CRM sync, Slack notifications, dashboard, logging and alerts. Covers M9 to M11, M15, M22 and M24.
-10. **Testing and launch:** End-to-end test with a seed list, test numbers and test meetings, pilot workspace, tuning, documentation and video walkthrough.
+10. **Testing and launch:** End-to-end test with a seed list, test numbers and test meetings, load test, failover and rollback drills, restore drill, security review, pilot workspace, tuning, documentation and video walkthrough.
 11. **Post-launch support:** Fixes, prompt, script and playbook tuning, and performance optimization.
 
-## 13. Acceptance criteria
+## 14. Acceptance criteria
 
 - [ ] A new company completes guided onboarding, connects every tool and passes all connection checks
 - [ ] The system asks for target countries, regions or cities, and every lead found falls inside them
@@ -567,9 +700,15 @@ Each phase ends with a client review before the next begins. Timeline is set onc
 - [ ] A white-label agency can brand the app with its own domain and logo, create client workspaces, and no platform branding appears to clients
 - [ ] One workspace can never access another workspace's data
 - [ ] Dashboard figures match the source tools and CRM; forced failures trigger retries and alerts
+- [ ] Uptime checks, health endpoints, Sentry, central logs and P1 to P3 alerts are live; a forced error appears in Sentry and the central log with its correlation ID
+- [ ] Simulating a vendor outage opens the circuit breaker, pauses or fails over that channel, notifies affected workspaces, and resumes automatically on recovery
+- [ ] A bad release is rolled back in one click for the web app, containers, n8n workflows and prompts, with no data loss
+- [ ] A database restore drill meets RPO 15 minutes and RTO 1 hour
+- [ ] A load test at target volume keeps database connections within the pool limit and queue latency within targets
+- [ ] MFA, role permissions, webhook signature checks and rate limits pass a security review
 - [ ] Documentation and video walkthrough delivered
 
-## 14. Future enhancements
+## 15. Future enhancements
 
 - Intent data signals (website visitors, hiring, funding) to trigger outreach
 - Real-time call coaching and live suggestions for human reps
