@@ -1,14 +1,14 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { requireWorkspace } from '@/lib/session';
-import { LEAD_SOURCES, LEAD_STAGES, LINE_TYPE_LABELS, PAGE_SIZE, SOURCE_LABELS, STAGE_LABELS, VERIFICATION_LABELS, VERIFICATION_STATUSES, filtersToQuery, parseLeadFilters, type LeadSource, type LeadStage, type VerificationStatus } from '@/lib/campaigns';
+import { scoreBand, LEAD_SOURCES, LEAD_STAGES, LINE_TYPE_LABELS, PAGE_SIZE, SOURCE_LABELS, STAGE_LABELS, VERIFICATION_LABELS, VERIFICATION_STATUSES, filtersToQuery, parseLeadFilters, type LeadSource, type LeadStage, type VerificationStatus } from '@/lib/campaigns';
 
 export const metadata: Metadata = { title: 'Leads' };
 
 type LeadRow = {
   id: string; full_name: string | null; title: string | null; email: string | null; phone: string | null;
   social_handles: Record<string, string> | null; source_channel: LeadSource; stage: LeadStage; created_at: string;
-  verification_status: VerificationStatus; phone_line_type: string | null; phone_country: string | null;
+  verification_status: VerificationStatus; phone_line_type: string | null; phone_country: string | null; score: number | null;
   companies: { name: string; domain: string | null; location: string | null; google_rating: number | null } | null;
 };
 
@@ -26,16 +26,19 @@ export default async function LeadsPage({
 
   let query = supabase
     .from('leads')
-    .select('id, full_name, title, email, phone, social_handles, source_channel, stage, created_at, verification_status, phone_line_type, phone_country, companies(name, domain, location, google_rating)', { count: 'exact' })
+    .select('id, full_name, title, email, phone, social_handles, source_channel, stage, created_at, verification_status, phone_line_type, phone_country, score, companies(name, domain, location, google_rating)', { count: 'exact' })
     .eq('workspace_id', workspace.id);
   if (f.source) query = query.eq('source_channel', f.source);
   if (f.stage) query = query.eq('stage', f.stage);
   if (f.verification) query = query.eq('verification_status', f.verification);
+  if (f.minScore !== null) query = query.gte('score', f.minScore);
   if (f.campaign) query = query.eq('campaign_id', f.campaign);
   if (f.q) query = query.or(`full_name.ilike.*${f.q}*,email.ilike.*${f.q}*,phone.ilike.*${f.q}*,title.ilike.*${f.q}*`);
   const from = (f.page - 1) * PAGE_SIZE;
   const [{ data, count }, { data: bySource }] = await Promise.all([
-    query.order('created_at', { ascending: false }).range(from, from + PAGE_SIZE - 1),
+    (f.sort === 'score'
+      ? query.order('score', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false })
+      : query.order('created_at', { ascending: false })).range(from, from + PAGE_SIZE - 1),
     supabase.from('leads').select('source_channel').eq('workspace_id', workspace.id).limit(5000),
   ]);
   const leads = (data ?? []) as unknown as LeadRow[];
@@ -77,8 +80,19 @@ export default async function LeadsPage({
             {VERIFICATION_STATUSES.map((v) => <option key={v} value={v}>{VERIFICATION_LABELS[v]}</option>)}
           </select>
         </label>
+        <label className="field">
+          <span className="sr-only">Minimum score</span>
+          <input type="number" name="min_score" min={0} max={100} placeholder="Min score" defaultValue={f.minScore ?? ''} />
+        </label>
+        <label className="field">
+          <span className="sr-only">Sort</span>
+          <select name="sort" defaultValue={f.sort}>
+            <option value="newest">Newest first</option>
+            <option value="score">Highest score first</option>
+          </select>
+        </label>
         <button className="btn btn-secondary" type="submit">Filter</button>
-        {f.q || f.stage || f.verification || f.source || f.campaign ? <Link href={base}>Clear</Link> : null}
+        {f.q || f.stage || f.minScore !== null || f.verification || f.source || f.campaign ? <Link href={base}>Clear</Link> : null}
       </form>
 
       <p className="muted" role="status">{total} {total === 1 ? 'lead' : 'leads'}{f.campaign ? ' in this campaign' : ''}</p>
@@ -93,12 +107,13 @@ export default async function LeadsPage({
         <div className="table-wrap">
           <table className="table">
             <thead>
-              <tr><th scope="col">Lead</th><th scope="col">Company</th><th scope="col">Contact</th><th scope="col">Source</th><th scope="col">Stage</th></tr>
+              <tr><th scope="col">Score</th><th scope="col">Lead</th><th scope="col">Company</th><th scope="col">Contact</th><th scope="col">Source</th><th scope="col">Stage</th></tr>
             </thead>
             <tbody>
               {leads.map((l) => (
                 <tr key={l.id}>
-                  <td>{l.full_name ?? '—'}{l.title ? <><br /><span className="muted">{l.title}</span></> : null}</td>
+                  <td>{l.score === null ? <span className="badge">Not scored</span> : <span className={`badge badge-${({ ok: 'ok', warn: 'warn', low: 'error', none: '' } as const)[scoreBand(l.score)]}`}>{l.score}</span>}</td>
+                  <td><Link href={`/w/${workspace.id}/leads/${l.id}`}>{l.full_name ?? l.companies?.name ?? 'Lead'}</Link>{l.title ? <><br /><span className="muted">{l.title}</span></> : null}</td>
                   <td>
                     {l.companies?.name ?? '—'}
                     {l.companies?.domain ? <><br /><span className="muted">{l.companies.domain}</span></> : null}

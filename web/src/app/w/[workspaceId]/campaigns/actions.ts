@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { friendlyDbError } from '@/lib/errors';
 import type { FormState } from '@/lib/form-state';
 import { requireUser } from '@/lib/session';
-import { JOB_TYPES, parseCampaignForm, type JobType } from '@/lib/campaigns';
+import { JOB_TYPES, parseCampaignForm, scoreThreshold, type JobType } from '@/lib/campaigns';
 import { firstError, uuidSchema } from '@/lib/validation';
 
 const NO_PERMISSION = 'Only owners and admins can manage campaigns.';
@@ -59,6 +59,7 @@ export async function queueAgentJob(_prev: FormState, form: FormData): Promise<F
     campaign_plan: 'The setup agent will re-plan this campaign within a minute.',
     lead_sourcing: 'The lead sourcing agent will start within a minute.',
     enrichment: 'The enrichment agent will find contacts and verify emails and phones within a minute.',
+    research: 'The research agent will research and score new leads within a minute.',
   };
   return { notice: notices[type] };
 }
@@ -81,4 +82,24 @@ export async function setCampaignStatus(_prev: FormState, form: FormData): Promi
   if (!data?.length) return { error: NO_PERMISSION };
   revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
   return { notice: status === 'active' ? 'Campaign is active.' : status === 'paused' ? 'Campaign paused.' : 'Campaign archived.' };
+}
+
+export async function setScoreThreshold(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  const threshold = scoreThreshold.safeParse(form.get('score_threshold') ?? '');
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  if (!threshold.success) return { error: firstError(threshold.error) };
+
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase
+    .from('campaigns')
+    .update({ score_threshold: threshold.data, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data)
+    .eq('id', campaignId.data)
+    .select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
+  return { notice: `Leads scoring ${threshold.data} or more now qualify for outreach. Existing scores are kept; re-run research to re-score.` };
 }

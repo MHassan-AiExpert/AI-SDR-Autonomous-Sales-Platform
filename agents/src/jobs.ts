@@ -11,6 +11,7 @@ import { sourceLlmSearch } from './sources/llmSearch.ts';
 import { SOURCE_LABELS, type Campaign, type Job, type Store } from './store.ts';
 import { log } from './log.ts';
 import { runEnrichment as enrich, type EnrichmentDeps } from './enrichment.ts';
+import { runResearch as research, ResearchError } from './research.ts';
 import type { Resolver } from './sources/website.ts';
 
 export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; scheduleHours?: number };
@@ -187,7 +188,21 @@ export async function runEnrichment(deps: Deps, job: Job) {
   return enrich(deps as EnrichmentDeps, job, campaign);
 }
 
-const HANDLERS = { campaign_plan: runCampaignPlan, lead_sourcing: runLeadSourcing, enrichment: runEnrichment } as const;
+export async function runResearch(deps: Deps, job: Job) {
+  const campaign = await deps.store.campaign(job.workspace_id, job.campaign_id);
+  if (!campaign) throw new JobError('The campaign no longer exists');
+  try {
+    return await research(deps, job, campaign);
+  } catch (err) {
+    if (err instanceof ResearchError) throw new JobError(err.message);
+    throw err;
+  }
+}
+
+const HANDLERS = { campaign_plan: runCampaignPlan, lead_sourcing: runLeadSourcing, enrichment: runEnrichment, research: runResearch } as const;
+
+// After a job succeeds, the next stage of the pipeline starts by itself
+const NEXT_STAGE: Partial<Record<Job['type'], 'enrichment' | 'research'>> = { lead_sourcing: 'enrichment', enrichment: 'research' };
 
 /** Claims and runs up to `limit` jobs. Each job's failure is recorded on that job only. */
 export async function runQueuedJobs(deps: Deps, limit: number) {
@@ -206,8 +221,8 @@ export async function runQueuedJobs(deps: Deps, limit: number) {
       const result = await HANDLERS[job.type](deps, job);
       await deps.store.finishJob(job.id, 'succeeded', result, null);
       await deps.store.runLogFinish(runLog, 'success', null);
-      // New leads go straight on to enrichment and verification
-      if (job.type === 'lead_sourcing') await deps.store.enqueue(job.workspace_id, job.campaign_id, 'enrichment').catch(() => false);
+      const next = NEXT_STAGE[job.type];
+      if (next) await deps.store.enqueue(job.workspace_id, job.campaign_id, next).catch(() => false);
       outcomes.push({ id: job.id, type: job.type, status: 'succeeded' });
       log('info', 'job succeeded', { job: job.id, type: job.type, workspace_id: job.workspace_id, correlation_id: job.correlation_id, ms: Date.now() - started });
     } catch (err) {

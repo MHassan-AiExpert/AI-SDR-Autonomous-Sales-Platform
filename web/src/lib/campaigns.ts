@@ -33,12 +33,15 @@ const areaList = z
   .transform((s) => [...new Set(s.split(/[\n;]+/).map((a) => a.trim()).filter(Boolean))])
   .pipe(z.array(z.string().max(120, 'Each target area must be at most 120 characters')).min(1, 'Add at least one target area, for example a country or city').max(10, 'Use at most 10 target areas'));
 
+export const scoreThreshold = z.coerce.number('Enter a score from 0 to 100').int('Use a whole number').min(0, 'The score threshold must be from 0 to 100').max(100, 'The score threshold must be from 0 to 100');
+
 export const campaignSchema = z.object({
   name: z.string().trim().min(1, 'Give the campaign a name').max(160, 'Campaign name must be at most 160 characters'),
   niche: z.string().trim().min(2, 'Describe the niche you sell to').max(200, 'Niche must be at most 200 characters'),
   target_areas: areaList,
   offer: z.string().trim().max(500, 'Offer must be at most 500 characters').transform((s) => s || null),
   daily_lead_limit: z.coerce.number('Enter a daily lead limit').int('Use a whole number').min(1, 'Daily lead limit must be at least 1').max(1000, 'Daily lead limit must be at most 1000'),
+  score_threshold: scoreThreshold,
   find_leads_now: z.boolean(),
 });
 export type CampaignInput = z.infer<typeof campaignSchema>;
@@ -50,13 +53,15 @@ export function parseCampaignForm(form: FormData) {
     target_areas: form.get('target_areas') ?? '',
     offer: form.get('offer') ?? '',
     daily_lead_limit: form.get('daily_lead_limit') ?? '',
+    score_threshold: form.get('score_threshold') ?? '60',
     find_leads_now: form.get('find_leads_now') === 'on',
   });
 }
 
 export const PAGE_SIZE = 50;
 
-export type LeadFilters = { source: LeadSource | null; stage: LeadStage | null; verification: VerificationStatus | null; campaign: string | null; q: string; page: number };
+export type LeadSort = 'newest' | 'score';
+export type LeadFilters = { source: LeadSource | null; stage: LeadStage | null; verification: VerificationStatus | null; campaign: string | null; q: string; minScore: number | null; sort: LeadSort; page: number };
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? '';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -67,6 +72,7 @@ export function parseLeadFilters(params: Record<string, string | string[] | unde
   const stage = one(params.stage);
   const campaign = one(params.campaign);
   const verification = one(params.verification);
+  const minScore = one(params.min_score) === '' ? NaN : Number(one(params.min_score));
   const page = Number.parseInt(one(params.page), 10);
   return {
     source: (LEAD_SOURCES as readonly string[]).includes(source) ? (source as LeadSource) : null,
@@ -74,6 +80,8 @@ export function parseLeadFilters(params: Record<string, string | string[] | unde
     verification: (VERIFICATION_STATUSES as readonly string[]).includes(verification) ? (verification as VerificationStatus) : null,
     campaign: UUID.test(campaign) ? campaign.toLowerCase() : null,
     q: searchTerm(one(params.q)),
+    minScore: Number.isInteger(minScore) && minScore >= 0 && minScore <= 100 ? minScore : null,
+    sort: one(params.sort) === 'score' ? 'score' : 'newest',
     page: Number.isFinite(page) && page > 0 ? Math.min(page, 1000) : 1,
   };
 }
@@ -95,14 +103,16 @@ export function filtersToQuery(f: LeadFilters, overrides: Partial<LeadFilters> =
   if (merged.verification) q.set('verification', merged.verification);
   if (merged.campaign) q.set('campaign', merged.campaign);
   if (merged.q) q.set('q', merged.q);
+  if (merged.minScore !== null) q.set('min_score', String(merged.minScore));
+  if (merged.sort === 'score') q.set('sort', 'score');
   if (merged.page > 1) q.set('page', String(merged.page));
   const s = q.toString();
   return s ? `?${s}` : '';
 }
 
-export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify' };
+export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score' };
 
-export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment'] as const;
+export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research'] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 export const JOB_STATUS_LABELS: Record<string, string> = { queued: 'Queued', running: 'Running', succeeded: 'Done', failed: 'Failed' };
 
@@ -119,6 +129,7 @@ export function describeJobResult(type: string, status: string, result: unknown,
     return sources.length ? `Plan ready. Searching ${sources.map((s) => SOURCE_LABELS[s]).join(', ')}.` : 'Plan ready, but no lead source is connected yet.';
   }
   if (type === 'enrichment') return describeEnrichment(r);
+  if (type === 'research') return describeResearch(r);
   if (typeof r.note === 'string') return r.note;
   const added = typeof r.added === 'number' ? r.added : 0;
   const parts: string[] = [];
@@ -134,6 +145,15 @@ export function describeJobResult(type: string, status: string, result: unknown,
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 const obj = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+function describeResearch(r: Record<string, unknown>): string {
+  const scored = num(r.leads_scored);
+  if (!scored && !num(r.companies_failed)) return 'No new leads to research.';
+  const parts = [`${plural(scored, 'lead')} scored: ${num(r.qualified)} qualified for outreach (score ${num(r.threshold)} or more), ${num(r.below_threshold)} below`];
+  if (num(r.companies_researched)) parts.push(`${plural(num(r.companies_researched), 'company', 'companies')} researched`);
+  if (num(r.companies_failed)) parts.push(`${plural(num(r.companies_failed), 'company', 'companies')} could not be researched and will be retried`);
+  return `${parts.join('; ')}.`;
+}
 
 function describeEnrichment(r: Record<string, unknown>): string {
   const companies = obj(r.companies);
@@ -172,4 +192,34 @@ export function describeSourcePlan(plan: unknown): SourceRow[] {
     if (source === 'llm_search') detail = list(s.queries).join(' · ');
     return { source, enabled, detail: detail || '—' };
   });
+}
+
+/** Colour band for a score badge. */
+export function scoreBand(score: number | null, threshold = 60): 'ok' | 'warn' | 'none' | 'low' {
+  if (score === null) return 'none';
+  if (score >= threshold) return 'ok';
+  if (score >= threshold - 20) return 'warn';
+  return 'low';
+}
+
+export type LeadReport = {
+  company_summary?: string; services?: string[]; pain_points?: string[]; trigger_events?: string[];
+  personalization_hooks?: string[]; fit_score?: number; intent_score?: number; score?: number;
+  score_reasons?: string[]; model_reasons?: string[]; disqualifiers?: string[]; qualified?: boolean; threshold?: number; generated_at?: string;
+};
+
+/** Reads the stored AI report defensively: only expected fields, right types. */
+export function readLeadReport(raw: unknown): LeadReport | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 10) : undefined);
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+  return {
+    company_summary: typeof r.company_summary === 'string' ? r.company_summary : undefined,
+    services: strs(r.services), pain_points: strs(r.pain_points), trigger_events: strs(r.trigger_events),
+    personalization_hooks: strs(r.personalization_hooks), fit_score: n(r.fit_score), intent_score: n(r.intent_score), score: n(r.score),
+    score_reasons: strs(r.score_reasons), model_reasons: strs(r.model_reasons), disqualifiers: strs(r.disqualifiers),
+    qualified: typeof r.qualified === 'boolean' ? r.qualified : undefined, threshold: n(r.threshold),
+    generated_at: typeof r.generated_at === 'string' ? r.generated_at : undefined,
+  };
 }

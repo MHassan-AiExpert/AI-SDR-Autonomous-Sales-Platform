@@ -6,7 +6,7 @@ import { canManageSettings } from '@/lib/roles';
 import { requireWorkspace } from '@/lib/session';
 import { uuidSchema } from '@/lib/validation';
 import { JOB_LABELS, JOB_STATUS_LABELS, PLAN_SOURCE_TOOLS, SOURCE_LABELS, describeJobResult, describeSourcePlan } from '@/lib/campaigns';
-import { queueAgentJob, setCampaignStatus } from '../actions';
+import { queueAgentJob, setCampaignStatus, setScoreThreshold } from '../actions';
 
 export const metadata: Metadata = { title: 'Campaign' };
 
@@ -20,18 +20,19 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
 
   const { data: campaign } = await supabase
     .from('campaigns')
-    .select('id, name, niche, offer, status, target_areas, daily_lead_limit, icp, source_plan, created_at')
+    .select('id, name, niche, offer, status, target_areas, daily_lead_limit, score_threshold, icp, source_plan, created_at')
     .eq('workspace_id', workspace.id)
     .eq('id', campaignId)
     .maybeSingle();
   if (!campaign) notFound();
 
-  const [{ data: jobs }, { count: leadCount }, { count: verified }, { count: awaiting }] = await Promise.all([
+  const [{ data: jobs }, { count: leadCount }, { count: verified }, { count: awaiting }, { count: qualified }] = await Promise.all([
     supabase.from('agent_jobs').select('id, type, status, result, error, created_at, finished_at')
       .eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).order('created_at', { ascending: false }).limit(20),
     supabase.from('leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id),
     supabase.from('leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).eq('verification_status', 'valid'),
     supabase.from('companies').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).eq('enrichment_status', 'pending'),
+    supabase.from('leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).gte('score', campaign.score_threshold),
   ]);
   const icp = (campaign.icp ?? {}) as Record<string, unknown>;
   const planned = typeof icp.summary === 'string';
@@ -48,13 +49,17 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
       </div>
       <dl className="stats">
         <div><dt>Leads found</dt><dd>{leadCount ?? 0}</dd></div>
+        <div><dt>Qualified for outreach</dt><dd>{qualified ?? 0}</dd></div>
         <div><dt>Verified emails</dt><dd>{verified ?? 0}</dd></div>
         <div><dt>Companies awaiting contacts</dt><dd>{awaiting ?? 0}</dd></div>
         <div><dt>Leads per day</dt><dd>{campaign.daily_lead_limit}</dd></div>
         <div><dt>Niche</dt><dd>{campaign.niche}</dd></div>
         <div><dt>Target areas</dt><dd>{list(campaign.target_areas).join('; ')}</dd></div>
       </dl>
-      <p><Link className="btn btn-secondary" href={`${base}/leads?campaign=${campaign.id}`}>View leads</Link></p>
+      <p className="row">
+        <Link className="btn btn-secondary" href={`${base}/leads?campaign=${campaign.id}&sort=score`}>View leads by score</Link>
+        <Link href={`${base}/leads?campaign=${campaign.id}&min_score=${campaign.score_threshold}&sort=score`}>Qualified leads only</Link>
+      </p>
 
       {manage ? (
         <section className="card stack" aria-labelledby="agent">
@@ -77,6 +82,12 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
             <ActionForm action={queueAgentJob}>
               <input type="hidden" name="workspace_id" value={workspace.id} />
               <input type="hidden" name="campaign_id" value={campaign.id} />
+              <input type="hidden" name="type" value="research" />
+              <SubmitButton variant="secondary">Research and score</SubmitButton>
+            </ActionForm>
+            <ActionForm action={queueAgentJob}>
+              <input type="hidden" name="workspace_id" value={workspace.id} />
+              <input type="hidden" name="campaign_id" value={campaign.id} />
               <input type="hidden" name="type" value="campaign_plan" />
               <SubmitButton variant="secondary">Re-plan campaign</SubmitButton>
             </ActionForm>
@@ -89,6 +100,22 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
           </div>
         </section>
       ) : null}
+
+      <section className="card stack" aria-labelledby="threshold">
+        <h2 id="threshold">Outreach threshold</h2>
+        <p className="muted">The research agent scores every lead from 0 to 100 for fit and intent. Only leads scoring {campaign.score_threshold} or more go on to outreach.</p>
+        {manage ? (
+          <ActionForm action={setScoreThreshold} className="row">
+            <input type="hidden" name="workspace_id" value={workspace.id} />
+            <input type="hidden" name="campaign_id" value={campaign.id} />
+            <label className="field">
+              <span className="sr-only">Minimum score</span>
+              <input name="score_threshold" type="number" min={0} max={100} step={1} defaultValue={campaign.score_threshold} required />
+            </label>
+            <SubmitButton variant="secondary">Save threshold</SubmitButton>
+          </ActionForm>
+        ) : null}
+      </section>
 
       <section className="card stack" aria-labelledby="icp">
         <h2 id="icp">Ideal customer profile</h2>

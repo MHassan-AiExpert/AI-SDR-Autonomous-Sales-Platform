@@ -23,7 +23,7 @@ export type Job = {
   id: string;
   workspace_id: string;
   campaign_id: string;
-  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment';
+  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research';
   attempts: number;
   correlation_id: string;
 };
@@ -36,6 +36,7 @@ export type Campaign = {
   offer: string | null;
   target_areas: string[];
   daily_lead_limit: number;
+  score_threshold: number;
   icp: Record<string, unknown>;
   source_plan: Record<string, unknown>;
 };
@@ -56,7 +57,7 @@ export class Store {
 
   async campaign(workspaceId: string, campaignId: string): Promise<Campaign | null> {
     const rows = await this.sql`
-      select id, workspace_id, name, niche, offer, target_areas, daily_lead_limit, icp, source_plan
+      select id, workspace_id, name, niche, offer, target_areas, daily_lead_limit, score_threshold, icp, source_plan
       from campaigns where workspace_id = ${workspaceId}::uuid and id = ${campaignId}::uuid`;
     if (!rows.length) return null;
     const c = rows[0] as unknown as Campaign;
@@ -221,7 +222,7 @@ export class Store {
     return Number(rows[0].n);
   }
 
-  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing'): Promise<boolean> {
+  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research'): Promise<boolean> {
     const rows = await this.sql`select agent_job_enqueue(${workspaceId}::uuid, ${campaignId}::uuid, ${type}) as ok`;
     return rows[0].ok === true;
   }
@@ -312,6 +313,40 @@ export class Store {
     });
   }
 
+  // ---------------------------------------------------------------- research
+
+  async leadsToResearch(workspaceId: string, campaignId: string, limit: number): Promise<ResearchLead[]> {
+    return (await this.sql`
+      select l.id, l.full_name, l.title, l.email, l.phone, l.verification_status, l.phone_line_type, l.social_handles,
+             c.id as company_id, c.name as company_name, c.domain as company_domain, c.location as company_location,
+             c.industry as company_industry, c.research as company_research, c.researched_at as company_researched_at
+      from leads l
+      join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      where l.workspace_id = ${workspaceId}::uuid and l.campaign_id = ${campaignId}::uuid
+        and l.researched_at is null and l.stage <> 'do_not_contact'
+      order by l.created_at, l.id
+      limit ${limit}`) as unknown as ResearchLead[];
+  }
+
+  async saveCompanyResearch(workspaceId: string, companyId: string, research: unknown & { company_summary: string }) {
+    await this.sql`
+      update companies set research = ${this.sql.json(research as postgres.JSONValue)}, research_brief = ${research.company_summary},
+        researched_at = now(), updated_at = now()
+      where workspace_id = ${workspaceId}::uuid and id = ${companyId}::uuid`;
+  }
+
+  async saveLeadScore(workspaceId: string, leadId: string, score: number, report: Record<string, unknown>, qualified: boolean) {
+    await this.sql.begin(async (tx) => {
+      await tx`
+        update leads set score = ${score}, ai_report = ${tx.json(report as postgres.JSONValue)}, researched_at = now(), updated_at = now()
+        where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid`;
+      await tx`
+        insert into activities (workspace_id, lead_id, type, summary, actor)
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'note',
+                ${`Researched and scored ${score}/100 (${qualified ? 'qualified for outreach' : 'below the threshold'})`}, 'ai')`;
+    });
+  }
+
   async runLogStart(workspaceId: string, workflow: string, correlationId: string): Promise<number> {
     const rows = await this.sql`
       insert into run_logs (workspace_id, workflow, status, correlation_id)
@@ -335,6 +370,13 @@ export const SOURCE_LABELS: Record<LeadCandidate['source'], string> = {
   apollo: 'Apollo', google_maps: 'Google Maps', instagram: 'Instagram', llm_search: 'LLM search',
   clay: 'Clay', facebook: 'Facebook', linkedin: 'LinkedIn', tiktok: 'TikTok', x: 'X', csv: 'CSV import',
   inbound_call: 'an inbound call', manual: 'manual entry',
+};
+
+export type ResearchLead = {
+  id: string; full_name: string | null; title: string | null; email: string | null; phone: string | null;
+  verification_status: string; phone_line_type: string | null; social_handles: Record<string, string> | null;
+  company_id: string; company_name: string; company_domain: string | null; company_location: string | null;
+  company_industry: string | null; company_research: unknown; company_researched_at: string | Date | null;
 };
 
 export type PendingCompany = {

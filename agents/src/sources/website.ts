@@ -91,3 +91,33 @@ export async function findSiteContacts(domain: string, fetchImpl: Fetch = fetch,
   const unique = [...new Set(emails)];
   return { email: own ?? (unique.length === 1 ? unique[0] : undefined), phone: phones.find((p) => p.startsWith('+')) ?? phones[0], pagesRead };
 }
+
+/** Readable text of an HTML page: no scripts, styles, tags or entities. */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<(script|style|noscript|svg|template)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<\/(p|div|li|h[1-6]|section|article|br|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&#\d+;/g, ' ')
+    .replace(/[ \t\f\v]+/g, ' ')
+    .replace(/\s*\n\s*/g, '\n')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}
+
+/** Text from the home and about pages, for the research agent. */
+export async function fetchSiteText(domain: string, fetchImpl: Fetch = fetch, resolve: Resolver = defaultResolver, maxChars = 8000): Promise<string> {
+  const parts: string[] = [];
+  for (const path of ['/', '/about', '/about-us']) {
+    if (parts.join('\n').length >= maxChars) break;
+    try {
+      const html = await fetchPage(new URL(`https://${domain}${path}`), fetchImpl, resolve);
+      if (html) parts.push(htmlToText(html));
+    } catch {
+      /* skip pages that cannot be read */
+    }
+  }
+  return [...new Set(parts)].join('\n').slice(0, maxChars);
+}

@@ -1,0 +1,118 @@
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import { requireWorkspace } from '@/lib/session';
+import { uuidSchema } from '@/lib/validation';
+import { LINE_TYPE_LABELS, SOURCE_LABELS, STAGE_LABELS, VERIFICATION_LABELS, readLeadReport, type LeadSource, type LeadStage, type VerificationStatus } from '@/lib/campaigns';
+
+export const metadata: Metadata = { title: 'Lead' };
+
+type Lead = {
+  id: string; full_name: string | null; title: string | null; email: string | null; phone: string | null;
+  phone_line_type: string | null; phone_country: string | null; linkedin_url: string | null; social_handles: Record<string, string> | null;
+  source_channel: LeadSource; source_query: string | null; stage: LeadStage; verification_status: VerificationStatus;
+  score: number | null; ai_report: unknown; created_at: string; campaign_id: string | null;
+  companies: { name: string; domain: string | null; industry: string | null; size_band: string | null; location: string | null; google_rating: number | null; google_reviews: number | null } | null;
+  campaigns: { name: string; score_threshold: number } | null;
+};
+
+const List = ({ items }: { items?: string[] }) => (items?.length ? <ul>{items.map((i) => <li key={i}>{i}</li>)}</ul> : <p className="muted">None found.</p>);
+
+export default async function LeadPage({ params }: { params: Promise<{ workspaceId: string; leadId: string }> }) {
+  const { workspaceId, leadId } = await params;
+  if (!uuidSchema.safeParse(leadId).success) notFound();
+  const { supabase, workspace } = await requireWorkspace(workspaceId);
+
+  const { data } = await supabase
+    .from('leads')
+    .select('id, full_name, title, email, phone, phone_line_type, phone_country, linkedin_url, social_handles, source_channel, source_query, stage, verification_status, score, ai_report, created_at, campaign_id, companies(name, domain, industry, size_band, location, google_rating, google_reviews), campaigns(name, score_threshold)')
+    .eq('workspace_id', workspace.id)
+    .eq('id', leadId)
+    .maybeSingle();
+  if (!data) notFound();
+  const lead = data as unknown as Lead;
+  const { data: activities } = await supabase
+    .from('activities')
+    .select('id, type, channel, summary, actor, created_at')
+    .eq('workspace_id', workspace.id)
+    .eq('lead_id', lead.id)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  const report = readLeadReport(lead.ai_report);
+  const base = `/w/${workspace.id}`;
+  const co = lead.companies;
+  const threshold = lead.campaigns?.score_threshold ?? 60;
+
+  return (
+    <>
+      <p><Link href={`${base}/leads${lead.campaign_id ? `?campaign=${lead.campaign_id}` : ''}`}>Leads</Link></p>
+      <div className="spread">
+        <h1>{lead.full_name ?? co?.name ?? 'Lead'}</h1>
+        {lead.score === null
+          ? <span className="badge">Not scored yet</span>
+          : <span className={lead.score >= threshold ? 'badge badge-ok' : 'badge badge-warn'}>Score {lead.score}/100 · {lead.score >= threshold ? 'qualified' : 'below threshold'}</span>}
+      </div>
+      <dl className="stats">
+        <div><dt>Stage</dt><dd>{STAGE_LABELS[lead.stage] ?? lead.stage}</dd></div>
+        <div><dt>Source</dt><dd>{SOURCE_LABELS[lead.source_channel] ?? lead.source_channel}</dd></div>
+        <div><dt>Campaign</dt><dd>{lead.campaign_id && lead.campaigns ? <Link href={`${base}/campaigns/${lead.campaign_id}`}>{lead.campaigns.name}</Link> : '—'}</dd></div>
+        <div><dt>Found</dt><dd><time dateTime={lead.created_at}>{new Date(lead.created_at).toUTCString()}</time></dd></div>
+      </dl>
+
+      <section className="card stack" aria-labelledby="contact">
+        <h2 id="contact">Contact</h2>
+        <dl className="facts">
+          <dt>Title</dt><dd>{lead.title ?? '—'}</dd>
+          <dt>Email</dt><dd>{lead.email ? <>{lead.email} <span className="badge">{VERIFICATION_LABELS[lead.verification_status]}</span></> : '—'}</dd>
+          <dt>Phone</dt><dd>{lead.phone ? `${lead.phone}${lead.phone_line_type ? ` · ${LINE_TYPE_LABELS[lead.phone_line_type] ?? lead.phone_line_type}` : ''}${lead.phone_country ? `, ${lead.phone_country}` : ''}` : '—'}</dd>
+          <dt>LinkedIn</dt><dd>{lead.linkedin_url ? <a href={lead.linkedin_url} rel="noopener noreferrer nofollow" target="_blank">{lead.linkedin_url}</a> : '—'}</dd>
+          <dt>Instagram</dt><dd>{lead.social_handles?.instagram ? `@${lead.social_handles.instagram}` : '—'}</dd>
+          <dt>Found with</dt><dd>{lead.source_query ?? '—'}</dd>
+        </dl>
+      </section>
+
+      <section className="card stack" aria-labelledby="company">
+        <h2 id="company">Company</h2>
+        <dl className="facts">
+          <dt>Name</dt><dd>{co?.name ?? '—'}</dd>
+          <dt>Website</dt><dd>{co?.domain ?? '—'}</dd>
+          <dt>Industry</dt><dd>{co?.industry ?? '—'}</dd>
+          <dt>Size</dt><dd>{co?.size_band ?? '—'}</dd>
+          <dt>Location</dt><dd>{co?.location ?? '—'}</dd>
+          <dt>Google rating</dt><dd>{co?.google_rating ? `★ ${co.google_rating}${co.google_reviews ? ` (${co.google_reviews} reviews)` : ''}` : '—'}</dd>
+        </dl>
+      </section>
+
+      <section className="card stack" aria-labelledby="report">
+        <h2 id="report">AI lead report</h2>
+        {!report ? <p className="muted">The research agent has not researched this lead yet.</p> : (
+          <>
+            {report.company_summary ? <p>{report.company_summary}</p> : null}
+            <h3>Likely pain points</h3><List items={report.pain_points} />
+            <h3>Trigger events</h3><List items={report.trigger_events} />
+            <h3>Personalisation hooks</h3><List items={report.personalization_hooks} />
+            <h3>Why this score</h3>
+            <p className="muted">Company fit {report.fit_score ?? '—'}, intent {report.intent_score ?? '—'}, final score {report.score ?? '—'} against a threshold of {report.threshold ?? threshold}.</p>
+            <List items={[...(report.score_reasons ?? []), ...(report.model_reasons ?? [])]} />
+            {report.disqualifiers?.length ? <><h3>Disqualifiers</h3><List items={report.disqualifiers} /></> : null}
+          </>
+        )}
+      </section>
+
+      <section className="card stack" aria-labelledby="timeline">
+        <h2 id="timeline">Activity</h2>
+        {!activities?.length ? <p className="muted">No activity yet.</p> : (
+          <ul className="list">
+            {activities.map((a) => (
+              <li key={a.id} className="stack">
+                <span>{a.summary}</span>
+                <span className="muted">{a.actor === 'ai' ? 'AI agent' : a.actor === 'human' ? 'Team member' : 'System'} · <time dateTime={a.created_at}>{new Date(a.created_at).toUTCString()}</time></span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  );
+}

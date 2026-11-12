@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { parseCampaignForm, parseLeadFilters, searchTerm, filtersToQuery, describeJobResult, describeSourcePlan } from '@/lib/campaigns';
+import { parseCampaignForm, parseLeadFilters, searchTerm, filtersToQuery, describeJobResult, describeSourcePlan, scoreBand, readLeadReport } from '@/lib/campaigns';
 
 const form = (over: Record<string, string> = {}) => {
   const f = new FormData();
@@ -10,7 +10,7 @@ const form = (over: Record<string, string> = {}) => {
 describe('campaign form', () => {
   test('CMP-01 a valid campaign is parsed, areas split by line or semicolon', () => {
     const r = parseCampaignForm(form({ target_areas: 'Austin, Texas\n\n Dallas, Texas ; Austin, Texas' }));
-    expect(r.success && r.data).toEqual({ name: 'Austin dentists', niche: 'Dental clinics', target_areas: ['Austin, Texas', 'Dallas, Texas'], offer: null, daily_lead_limit: 100, find_leads_now: true });
+    expect(r.success && r.data).toEqual({ name: 'Austin dentists', niche: 'Dental clinics', target_areas: ['Austin, Texas', 'Dallas, Texas'], offer: null, daily_lead_limit: 100, score_threshold: 60, find_leads_now: true });
   });
 
   test('CMP-02 missing niche, areas or a bad limit give a clear message', () => {
@@ -34,9 +34,9 @@ describe('campaign form', () => {
 describe('lead filters', () => {
   test('CMP-04 known filters are kept and unknown values ignored', () => {
     expect(parseLeadFilters({ source: 'google_maps', stage: 'new', campaign: 'A7C1A3A0-0000-4000-8000-000000000001', q: 'smile', page: '3' }))
-      .toEqual({ source: 'google_maps', stage: 'new', verification: null, campaign: 'a7c1a3a0-0000-4000-8000-000000000001', q: 'smile', page: 3 });
+      .toEqual({ source: 'google_maps', stage: 'new', verification: null, campaign: 'a7c1a3a0-0000-4000-8000-000000000001', q: 'smile', minScore: null, sort: 'newest', page: 3 });
     expect(parseLeadFilters({ source: 'myspace', stage: 'drop table', campaign: '1 or 1=1', page: '-2' }))
-      .toEqual({ source: null, stage: null, verification: null, campaign: null, q: '', page: 1 });
+      .toEqual({ source: null, stage: null, verification: null, campaign: null, q: '', minScore: null, sort: 'newest', page: 1 });
     expect(parseLeadFilters({ source: ['apollo', 'x'] }).source).toBe('apollo');
   });
 
@@ -98,5 +98,32 @@ describe('enrichment summaries', () => {
     expect(f.verification).toBe('valid');
     expect(filtersToQuery(f)).toBe('?source=apollo&verification=valid');
     expect(parseLeadFilters({ verification: 'maybe' }).verification).toBeNull();
+  });
+});
+
+describe('research and scoring', () => {
+  test('CMP-11 research runs are described in plain words', () => {
+    expect(describeJobResult('research', 'succeeded', { leads_scored: 12, qualified: 5, below_threshold: 7, threshold: 70, companies_researched: 6, companies_failed: 1 }, null))
+      .toBe('12 leads scored: 5 qualified for outreach (score 70 or more), 7 below; 6 companies researched; 1 company could not be researched and will be retried.');
+    expect(describeJobResult('research', 'succeeded', { leads_scored: 0, companies_failed: 0 }, null)).toBe('No new leads to research.');
+  });
+
+  test('CMP-12 score threshold and filters', () => {
+    const r = parseCampaignForm(form({ score_threshold: '75' }));
+    expect(r.success && r.data.score_threshold).toBe(75);
+    expect(parseCampaignForm(form({ score_threshold: '120' })).success).toBe(false);
+    const f = parseLeadFilters({ min_score: '70', sort: 'score' });
+    expect([f.minScore, f.sort]).toEqual([70, 'score']);
+    expect(filtersToQuery(f)).toBe('?min_score=70&sort=score');
+    expect(parseLeadFilters({ min_score: 'abc', sort: 'evil' })).toMatchObject({ minScore: null, sort: 'newest' });
+    expect(parseLeadFilters({ min_score: '' }).minScore).toBeNull();
+    expect([scoreBand(80, 70), scoreBand(55, 70), scoreBand(20, 70), scoreBand(null)]).toEqual(['ok', 'warn', 'low', 'none']);
+  });
+
+  test('CMP-13 the AI report is read defensively', () => {
+    expect(readLeadReport(null)).toBeNull();
+    const r = readLeadReport({ company_summary: 'x', pain_points: ['a', 3, null, 'b'], score: '90', qualified: 'yes', fit_score: 80, extra: '<script>' });
+    expect(r).toMatchObject({ company_summary: 'x', pain_points: ['a', 'b'], score: undefined, qualified: undefined, fit_score: 80 });
+    expect(JSON.stringify(r)).not.toContain('script');
   });
 });

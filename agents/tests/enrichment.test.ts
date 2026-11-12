@@ -2,7 +2,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { startTestDb, fakeFetch, asUser, USERS, type TestDb } from './harness.ts';
-import { runQueuedJobs, type Deps } from '../src/jobs.ts';
+import { runQueuedJobs as runJobs, type Deps } from '../src/jobs.ts';
 import { MODEL_PLAN } from './fixtures.ts';
 
 let t: TestDb;
@@ -32,7 +32,7 @@ const company = async (ws: string, c: string, name: string, domain: string | nul
 const lead = async (ws: string, c: string, email: string | null, phone: string | null) =>
   (await t.db.query(`insert into leads (workspace_id, campaign_id, email, phone, source_channel) values ($1,$2,$3,$4,'google_maps') returning id`, [ws, c, email, phone])).rows[0].id as string;
 const queue = (ws: string, c: string) => t.db.query(`insert into agent_jobs (workspace_id, campaign_id, type) values ($1, $2, 'enrichment')`, [ws, c]);
-const lastJob = async (c: string) => (await t.db.query(`select * from agent_jobs where campaign_id = $1 order by created_at desc limit 1`, [c])).rows[0];
+const lastJob = async (c: string) => (await t.db.query(`select * from agent_jobs where campaign_id = $1 and type = 'enrichment' order by created_at desc limit 1`, [c])).rows[0];
 
 const html = (body: string) => new Response(body, { headers: { 'content-type': 'text/html' } });
 const ZB: Record<string, string> = { 'ok@smile1.com': 'valid', 'bad@smile1.com': 'invalid', 'all@smile1.com': 'catch-all', 'kim@brightteeth.com': 'valid', 'hello@quietclinic.com': 'unknown' };
@@ -51,6 +51,12 @@ function apis(over: { zerobounce?: () => unknown } = {}) {
     [/(clinic\d+)\.com\/contact$/, (u) => html(`<a href="mailto:hello@${u.match(/(clinic\d+)\.com/)![1]}.com">Mail</a>`)],
     [/clinic\d+\.com/, () => html('<h1>Clinic</h1>')],
   ]);
+}
+// Enrichment hands over to research (tested in research.test.ts); drop that follow-up here
+async function runQueuedJobs(d: Deps, limit: number) {
+  const out = await runJobs(d, limit);
+  await t.db.query(`delete from agent_jobs where type = 'research' and status = 'queued'`);
+  return out;
 }
 const deps = (f = apis(), extra: Partial<Deps> = {}): Deps => ({ store: t.store, models, fetchImpl: f.impl, resolve, ...extra });
 
@@ -191,11 +197,11 @@ describe('enrichment edge cases', () => {
     await t.db.query(`delete from suppressions where workspace_id = $1`, [t.wsA]);
   });
 
-  test('EN-12 the daily schedule queues sourcing and enrichment for active campaigns', async () => {
+  test('EN-12 the daily schedule queues sourcing, enrichment and research for active campaigns', async () => {
     const c = await campaign(t.wsB, { status: 'active' });
-    await runQueuedJobs(deps(apis(), { scheduleHours: 24 }), 0 + 1);
+    await runJobs(deps(apis(), { scheduleHours: 24 }), 1);
     const { rows } = await t.db.query(`select type from agent_jobs where campaign_id = $1 order by type`, [c]);
-    expect(rows.map((r: any) => r.type)).toEqual(['enrichment', 'lead_sourcing']);
+    expect(rows.map((r: any) => r.type)).toEqual(['enrichment', 'lead_sourcing', 'research']);
     await t.db.query(`delete from agent_jobs where campaign_id = $1`, [c]);
     await t.db.query(`update campaigns set status = 'paused' where id = $1`, [c]);
   });

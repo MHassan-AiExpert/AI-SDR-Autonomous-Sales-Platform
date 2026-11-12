@@ -47,6 +47,10 @@ export default async function NewCampaignPage({ params }: { params: Promise<{ wo
           <span>Leads per day</span>
           <input name="daily_lead_limit" type="number" min={1} max={1000} step={1} defaultValue={100} required />
         </label>
+        <label className="field">
+          <span>Minimum score for outreach (0 to 100)</span>
+          <input name="score_threshold" type="number" min={0} max={100} step={1} defaultValue={60} required />
+        </label>
         <label className="choice">
           <input type="checkbox" name="find_leads_now" defaultChecked />
           <span><strong>Find leads right away</strong><br />Start lead sourcing as soon as the plan is ready.</span>
