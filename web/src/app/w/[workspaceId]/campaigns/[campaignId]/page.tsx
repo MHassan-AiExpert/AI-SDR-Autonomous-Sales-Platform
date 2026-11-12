@@ -10,6 +10,8 @@ import { queueAgentJob, saveReplySettings, setCampaignStatus, setScoreThreshold 
 import { OutreachSection, type OutreachCampaign } from './outreach-section';
 import { VoiceSection, type VoiceCampaign } from './voice-section';
 import { TextSection, type TextCampaign } from './text-section';
+import { CloserSection } from './closer-section';
+import { readPlaybook } from '@/lib/closer';
 
 export const metadata: Metadata = { title: 'Campaign' };
 
@@ -23,14 +25,14 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
 
   const { data: campaign } = await supabase
     .from('campaigns')
-    .select('id, name, niche, offer, status, target_areas, daily_lead_limit, score_threshold, icp, source_plan, created_at, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start, send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state, auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start, call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at, sms_status, sms_channel, sms_from, whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages')
+    .select('id, name, niche, offer, status, target_areas, daily_lead_limit, score_threshold, icp, source_plan, created_at, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start, send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state, auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start, call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at, sms_status, sms_channel, sms_from, whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages, vapi_closer_assistant_id')
     .eq('workspace_id', workspace.id)
     .eq('id', campaignId)
     .maybeSingle();
   if (!campaign) notFound();
 
   const emailCount = (status: string) => supabase.from('emails').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).eq('status', status);
-  const [{ data: jobs }, { count: leadCount }, { count: verified }, { count: awaiting }, { count: qualified }, { count: drafts }, { count: approvedEmails }, { count: queuedEmails }, { data: instantly }, { data: vapi }, { count: callsToday }, { data: twilio }, { count: textsToday }] = await Promise.all([
+  const [{ data: jobs }, { count: leadCount }, { count: verified }, { count: awaiting }, { count: qualified }, { count: drafts }, { count: approvedEmails }, { count: queuedEmails }, { data: instantly }, { data: vapi }, { count: callsToday }, { data: twilio }, { count: textsToday }, { data: payTools }, { data: playbookRow }] = await Promise.all([
     supabase.from('agent_jobs').select('id, type, status, result, error, created_at, finished_at')
       .eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).order('created_at', { ascending: false }).limit(20),
     supabase.from('leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id),
@@ -43,7 +45,11 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
     supabase.from('calls').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).eq('direction', 'outbound').gte('created_at', new Date(new Date().setUTCHours(0, 0, 0, 0)).toISOString()),
     supabase.from('integrations').select('status').eq('workspace_id', workspace.id).eq('tool', 'twilio').maybeSingle(),
     supabase.from('messages').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).eq('direction', 'outbound').not('step', 'is', null).gte('created_at', new Date(new Date().setUTCHours(0, 0, 0, 0)).toISOString()),
+    supabase.from('integrations').select('tool, status').eq('workspace_id', workspace.id).in('tool', ['stripe', 'pandadoc']),
+    supabase.from('playbooks').select('content').eq('workspace_id', workspace.id).eq('is_active', true).maybeSingle(),
   ]);
+  const playbook = readPlaybook(playbookRow?.content);
+  const toolOn = (t: string) => (payTools ?? []).some((x) => x.tool === t && x.status === 'connected');
   const checklist = (workspace.setup_checklist ?? {}) as Record<string, unknown>;
   const icp = (campaign.icp ?? {}) as Record<string, unknown>;
   const planned = typeof icp.summary === 'string';
@@ -138,6 +144,18 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
         twilioConnected={twilio?.status === 'connected'}
         channelOn={workspace.enabled_channels?.[campaign.sms_channel === 'whatsapp' ? 'whatsapp' : 'sms'] !== false}
         textsToday={textsToday ?? 0}
+      />
+
+      <CloserSection
+        workspaceId={workspace.id}
+        campaignId={campaign.id}
+        assistantId={campaign.vapi_closer_assistant_id}
+        manage={manage}
+        readiness={{
+          closerEnabled: workspace.ai_closer_enabled, vapiConnected: vapi?.status === 'connected', playbookReady: Boolean(playbook),
+          assistantId: campaign.vapi_closer_assistant_id, phoneNumberId: campaign.vapi_phone_number_id,
+          stripeConnected: toolOn('stripe'), pandadocConnected: toolOn('pandadoc'), templateId: playbook?.proposal_template_id ?? null,
+        }}
       />
 
       <section className="card stack" aria-labelledby="answers">

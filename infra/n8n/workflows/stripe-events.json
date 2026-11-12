@@ -1,0 +1,113 @@
+{
+  "id": "aisdrStripeEvnt1",
+  "name": "Stripe payment events",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stripe/:token",
+        "responseMode": "onReceived",
+        "responseCode": 200,
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "ad5f6e4b-5b72-4f4d-8e54-4c3d9d3f2401",
+      "name": "Stripe webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "d6a4f5e7-8e91-4ca3-9dc4-e5f6a7b8c904"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Forward the exact body Stripe signed, with its Stripe-Signature, so the agent can verify it.\nconst crypto = require('crypto');\nconst out = [];\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  let raw = '';\n  if (item.binary && item.binary.data) {\n    const buf = await this.helpers.getBinaryDataBuffer(i, 'data');\n    raw = buf.toString('utf8');\n  } else {\n    raw = JSON.stringify(item.json.body ?? {});\n  }\n  const headers = item.json.headers ?? {};\n  const body = JSON.stringify({ token: String(item.json.params?.token ?? ''), raw, signature: String(headers['stripe-signature'] ?? '') });\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = crypto.createHmac('sha256', $env.PLATFORM_HMAC_SECRET).update(`${timestamp}.${body}`).digest('hex');\n  out.push({ json: { timestamp, body, signature } });\n}\nreturn out;"
+      },
+      "id": "ad5f6e4b-5b72-4f4d-8e54-4c3d9d3f2402",
+      "name": "Sign event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AGENT_SERVICE_URL }}/webhooks/stripe",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "ad5f6e4b-5b72-4f4d-8e54-4c3d9d3f2403",
+      "name": "Deliver to agent service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Stripe webhook": {
+      "main": [
+        [
+          {
+            "node": "Sign event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign event": {
+      "main": [
+        [
+          {
+            "node": "Deliver to agent service",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "timezone": "UTC"
+  },
+  "active": true
+}

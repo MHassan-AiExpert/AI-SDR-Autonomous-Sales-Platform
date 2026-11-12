@@ -386,6 +386,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F10](reports/F10-answers-booking/feature-report.md) | AI answers in the email thread, Calendly booking links and meetings | 38 passed |
 | [F11](reports/F11-ai-voice-calling/feature-report.md) | AI voice calling with consent rules, calling hours, transcripts and recordings | 41 passed |
 | [F12](reports/F12-sms-whatsapp-follow-ups/feature-report.md) | SMS and WhatsApp follow-ups with consent rules, two-way replies and STOP handling | 43 passed |
+| [F13](reports/F13-ai-closer/feature-report.md) | AI closer with playbook pricing, Stripe payment links, PandaDoc proposals and won deals | 43 passed |
 
 ---
 

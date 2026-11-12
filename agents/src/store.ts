@@ -24,7 +24,7 @@ export type Job = {
   id: string;
   workspace_id: string;
   campaign_id: string;
-  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach';
+  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer';
   attempts: number;
   correlation_id: string;
 };
@@ -76,6 +76,7 @@ export type Campaign = {
   sms_after_days: number;
   sms_daily_limit: number;
   sms_max_messages: number;
+  vapi_closer_assistant_id: string | null;
 };
 
 export class Store {
@@ -99,7 +100,7 @@ export class Store {
              send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state,
              auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start,
              call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at, sms_status, sms_channel, sms_from,
-             whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages
+             whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages, vapi_closer_assistant_id
       from campaigns where workspace_id = ${workspaceId}::uuid and id = ${campaignId}::uuid`;
     if (!rows.length) return null;
     const c = rows[0] as unknown as Campaign;
@@ -264,7 +265,7 @@ export class Store {
     return Number(rows[0].n);
   }
 
-  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach'): Promise<boolean> {
+  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer'): Promise<boolean> {
     const rows = await this.sql`select agent_job_enqueue(${workspaceId}::uuid, ${campaignId}::uuid, ${type}) as ok`;
     return rows[0].ok === true;
   }
@@ -396,9 +397,12 @@ export class Store {
     return String(rows[0]?.automation_mode ?? 'autopilot');
   }
 
-  async workspaceState(workspaceId: string): Promise<{ name: string; outreach_paused: boolean; enabled_channels: Record<string, boolean> }> {
-    const rows = await this.sql`select name, outreach_paused, enabled_channels from workspaces where id = ${workspaceId}::uuid`;
-    return { name: String(rows[0]?.name ?? ''), outreach_paused: rows[0]?.outreach_paused === true, enabled_channels: (rows[0]?.enabled_channels ?? {}) as Record<string, boolean> };
+  async workspaceState(workspaceId: string): Promise<{ name: string; outreach_paused: boolean; enabled_channels: Record<string, boolean>; ai_closer_enabled: boolean }> {
+    const rows = await this.sql`select name, outreach_paused, enabled_channels, ai_closer_enabled from workspaces where id = ${workspaceId}::uuid`;
+    return {
+      name: String(rows[0]?.name ?? ''), outreach_paused: rows[0]?.outreach_paused === true,
+      enabled_channels: (rows[0]?.enabled_channels ?? {}) as Record<string, boolean>, ai_closer_enabled: rows[0]?.ai_closer_enabled === true,
+    };
   }
 
   async activePlaybook(workspaceId: string): Promise<unknown> {
@@ -501,7 +505,7 @@ export class Store {
     return rows[0]?.id ?? null;
   }
 
-  async insertInboundEvent(workspaceId: string, campaignId: string | null, type: string, leadEmail: string | null, payload: Record<string, unknown>, dedupe: string, status: 'received' | 'ignored', provider: 'instantly' | 'calendly' | 'vapi' | 'twilio' = 'instantly'): Promise<string | null> {
+  async insertInboundEvent(workspaceId: string, campaignId: string | null, type: string, leadEmail: string | null, payload: Record<string, unknown>, dedupe: string, status: 'received' | 'ignored', provider: 'instantly' | 'calendly' | 'vapi' | 'twilio' | 'stripe' = 'instantly'): Promise<string | null> {
     const rows = await this.sql`
       insert into inbound_events (workspace_id, campaign_id, provider, event_type, lead_email, payload, dedupe_key, status, processed_at)
       values (${workspaceId}::uuid, ${campaignId}, ${provider}, ${type}, ${leadEmail}, ${this.sql.json(payload as postgres.JSONValue)}, ${dedupe}, ${status},
@@ -692,15 +696,15 @@ export class Store {
   /** Records a booking once; returns the meeting id when it is new. */
   async saveMeeting(workspaceId: string, leadId: string, m: {
     externalId: string; startsAt: string; endsAt: string | null; eventName: string | null; inviteeName: string | null;
-    inviteeEmail: string | null; joinUrl: string | null; cancelUrl: string | null; rescheduleUrl: string | null;
+    inviteeEmail: string | null; joinUrl: string | null; cancelUrl: string | null; rescheduleUrl: string | null; phone?: string | null;
   }): Promise<string | null> {
     return this.sql.begin(async (tx) => {
       const rows = await tx`
         insert into meetings (workspace_id, lead_id, campaign_id, starts_at, ends_at, zoom_url, booked_via, run_by, status, provider, external_id,
-                              event_name, invitee_name, invitee_email, cancel_url, reschedule_url)
+                              event_name, invitee_name, invitee_email, cancel_url, reschedule_url, phone)
         select ${workspaceId}::uuid, l.id, l.campaign_id, ${m.startsAt}::timestamptz, ${m.endsAt}::timestamptz, ${m.joinUrl}, 'calendly',
                case when w.ai_closer_enabled then 'ai_closer' else 'human' end, 'scheduled', 'calendly', ${m.externalId},
-               ${m.eventName}, ${m.inviteeName}, ${m.inviteeEmail}, ${m.cancelUrl}, ${m.rescheduleUrl}
+               ${m.eventName}, ${m.inviteeName}, ${m.inviteeEmail}, ${m.cancelUrl}, ${m.rescheduleUrl}, ${m.phone ?? null}
         from leads l join workspaces w on w.id = l.workspace_id
         where l.workspace_id = ${workspaceId}::uuid and l.id = ${leadId}::uuid
         on conflict (workspace_id, provider, external_id) where external_id is not null do nothing
@@ -763,11 +767,11 @@ export class Store {
       limit ${limit}`) as unknown as import('./voice.ts').CallLead[];
   }
 
-  async insertCall(workspaceId: string, campaignId: string, leadId: string, phone: string, attempt: number, basis: string): Promise<string | null> {
+  async insertCall(workspaceId: string, campaignId: string, leadId: string, phone: string, attempt: number, basis: string, agent: 'caller' | 'closer' = 'caller', key?: string): Promise<string | null> {
     const rows = await this.sql`
       insert into calls (workspace_id, lead_id, campaign_id, agent, direction, to_number, provider, status, attempt, idempotency_key, analysis)
-      values (${workspaceId}::uuid, ${leadId}::uuid, ${campaignId}::uuid, 'caller', 'outbound', ${phone}, 'vapi', 'queued', ${attempt},
-              ${`${campaignId}:${leadId}:call:${attempt}`}, ${this.sql.json({ consent_basis: basis })})
+      values (${workspaceId}::uuid, ${leadId}::uuid, ${campaignId}::uuid, ${agent}, 'outbound', ${phone}, 'vapi', 'queued', ${attempt},
+              ${key ?? `${campaignId}:${leadId}:call:${attempt}`}, ${this.sql.json({ consent_basis: basis })})
       on conflict (workspace_id, idempotency_key) do nothing
       returning id`;
     return rows[0]?.id ?? null;
@@ -781,9 +785,9 @@ export class Store {
     await this.sql`update calls set status = 'failed', outcome = 'failed', error = ${error}, ended_at = now() where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid`;
   }
 
-  async callByProviderId(workspaceId: string, providerId: string): Promise<{ id: string; lead_id: string; campaign_id: string | null } | null> {
-    const rows = await this.sql`select id, lead_id, campaign_id from calls where workspace_id = ${workspaceId}::uuid and provider = 'vapi' and provider_call_id = ${providerId}`;
-    return (rows[0] ?? null) as { id: string; lead_id: string; campaign_id: string | null } | null;
+  async callByProviderId(workspaceId: string, providerId: string): Promise<{ id: string; lead_id: string; campaign_id: string | null; agent: string } | null> {
+    const rows = await this.sql`select id, lead_id, campaign_id, agent from calls where workspace_id = ${workspaceId}::uuid and provider = 'vapi' and provider_call_id = ${providerId}`;
+    return (rows[0] ?? null) as { id: string; lead_id: string; campaign_id: string | null; agent: string } | null;
   }
 
   async callStatus(workspaceId: string, id: string, status: 'ringing' | 'in_progress') {
@@ -975,6 +979,232 @@ export class Store {
       await tx`
         insert into activities (workspace_id, lead_id, type, channel, summary, actor)
         values (${workspaceId}::uuid, ${leadId}::uuid, 'status_change', ${channel}, ${`${why}: suppressed on every channel`.slice(0, 500)}, 'system')`;
+    });
+  }
+
+  // ---------------------------------------------------------------- AI closer
+
+  async activePlaybookRow(workspaceId: string): Promise<{ version: number; content: unknown } | null> {
+    const rows = await this.sql`select version, content from playbooks where workspace_id = ${workspaceId}::uuid and is_active limit 1`;
+    return (rows[0] ?? null) as { version: number; content: unknown } | null;
+  }
+
+  /** AI-run meetings that start within a minute or started in the last 15 minutes. */
+  async closerMeetings(workspaceId: string, campaignId: string) {
+    return (await this.sql`
+      select m.id, m.lead_id, m.starts_at, m.phone as meeting_phone, m.event_name, m.invitee_name, m.invitee_email,
+             l.full_name, l.email, l.phone, l.phone_checked_at, l.consent, l.stage, l.ai_report, c.name as company_name,
+             app.is_suppressed(l.workspace_id, l.email, coalesce(m.phone, l.phone)) as suppressed
+      from meetings m
+      join leads l on l.workspace_id = m.workspace_id and l.id = m.lead_id
+      left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      where m.workspace_id = ${workspaceId}::uuid and m.campaign_id = ${campaignId}::uuid
+        and m.status = 'scheduled' and m.run_by = 'ai_closer' and m.closer_status = 'pending'
+        and m.starts_at <= now() + interval '1 minute' and m.starts_at > now() - interval '15 minutes'
+      order by m.starts_at`) as unknown as import('./closer.ts').CloserMeeting[];
+  }
+
+  async meetingCalling(workspaceId: string, meetingId: string, callId: string): Promise<boolean> {
+    const rows = await this.sql`
+      update meetings set closer_status = 'calling', call_id = ${callId}::uuid, updated_at = now()
+      where workspace_id = ${workspaceId}::uuid and id = ${meetingId}::uuid and closer_status = 'pending' returning id`;
+    return rows.length === 1;
+  }
+
+  /** The team takes over a meeting: a task due at the meeting time, and the reason on the timeline. */
+  async handOffMeeting(workspaceId: string, meetingId: string, leadId: string, reason: string, status: 'handed_off' | 'failed' = 'handed_off') {
+    await this.sql.begin(async (tx) => {
+      const rows = await tx`
+        update meetings set closer_status = ${status}, run_by = 'human', closer_note = ${reason.slice(0, 400)}, updated_at = now()
+        where workspace_id = ${workspaceId}::uuid and id = ${meetingId}::uuid and closer_status in ('pending', 'calling') returning starts_at`;
+      if (!rows.length) return;
+      await tx`insert into follow_ups (workspace_id, lead_id, channel, due_at) values (${workspaceId}::uuid, ${leadId}::uuid, 'manual', ${rows[0].starts_at})`;
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'meeting', 'voice', ${`Meeting handed to the team: ${reason}`.slice(0, 500)}, 'system', 'meetings', ${meetingId}::uuid)`;
+    });
+  }
+
+  /** Stores the closer call result on the call, the meeting, the deal and the lead. */
+  async finishCloserCall(workspaceId: string, callId: string, r: {
+    outcome: import('./closer.ts').CloserOutcome; plan: import('./closer.ts').Plan | null; summary: string | null; transcript: string | null;
+    recordingUrl: string | null; duration: number | null; endedReason: string | null; endedAt: string | null; startedAt: string | null;
+    analysis: Record<string, unknown>; followUpTime: string | null; handoffReason: string | null;
+  }): Promise<{ leadId: string; name: string; dealId: string | null; closePending: boolean; campaignId: string | null } | null> {
+    return this.sql.begin(async (tx) => {
+      const callOutcome: Record<string, string> = {
+        agreed: 'interested', proposal_requested: 'interested', follow_up: 'callback', needs_human: 'interested',
+        not_interested: 'not_interested', do_not_call: 'do_not_call', no_answer: 'no_answer', voicemail: 'voicemail',
+      };
+      const calls = await tx`
+        update calls set status = 'ended', outcome = ${callOutcome[r.outcome] ?? 'no_answer'}, summary = ${r.summary}, transcript = ${r.transcript},
+          recording_url = ${r.recordingUrl}, duration_seconds = ${r.duration}, ended_reason = ${r.endedReason},
+          ended_at = coalesce(${r.endedAt}::timestamptz, now()), started_at = coalesce(${r.startedAt}::timestamptz, started_at),
+          handed_off = ${r.outcome === 'needs_human'},
+          analysis = coalesce(analysis, '{}'::jsonb) || ${tx.json({ ...r.analysis, closer_outcome: r.outcome } as postgres.JSONValue)}
+        where workspace_id = ${workspaceId}::uuid and id = ${callId}::uuid
+        returning lead_id, campaign_id`;
+      if (!calls.length) return null;
+      const leadId = calls[0].lead_id as string;
+      const campaignId = (calls[0].campaign_id ?? null) as string | null;
+      const lead = (await tx`select stage, phone, coalesce(full_name, email, phone) as name, source_channel from leads where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid`)[0];
+      const meetings = await tx`select id, phone from meetings where workspace_id = ${workspaceId}::uuid and call_id = ${callId}::uuid`;
+      const meetingId = (meetings[0]?.id ?? null) as string | null;
+      const held = r.outcome !== 'no_answer' && r.outcome !== 'voicemail';
+      if (meetingId) {
+        await tx`
+          update meetings set status = ${held ? 'completed' : 'no_show'}, attended = ${held}, closer_status = ${held ? 'held' : 'no_answer'},
+            summary = ${r.summary?.slice(0, 1200) ?? null}, transcript = ${r.transcript}, recording_url = ${r.recordingUrl},
+            outcome = ${r.outcome}, closer_note = ${r.handoffReason?.slice(0, 400) ?? null}, updated_at = now()
+          where workspace_id = ${workspaceId}::uuid and id = ${meetingId}::uuid`;
+      }
+      const setStage = async (target: string) => {
+        const next = nextStage(String(lead.stage), target);
+        if (next !== lead.stage) await tx`update leads set stage = ${next}, stage_changed_at = now(), updated_at = now() where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid`;
+      };
+      const task = async (due: Date) => { await tx`insert into follow_ups (workspace_id, lead_id, channel, due_at) values (${workspaceId}::uuid, ${leadId}::uuid, 'manual', ${due})`; };
+
+      let dealId: string | null = null;
+      let closePending = false;
+      if (held) {
+        const agreed = r.outcome === 'agreed' || r.outcome === 'proposal_requested';
+        const closeStatus = agreed ? (r.plan ? 'pending' : 'needs_team') : r.outcome === 'needs_human' ? 'needs_team' : 'none';
+        const stage = r.outcome === 'not_interested' || r.outcome === 'do_not_call' ? 'lost' : 'meeting_held';
+        const rows = await tx`
+          insert into deals (workspace_id, lead_id, campaign_id, meeting_id, stage, value_cents, currency, plan_name, billing_interval, close_status, source_channel, lost_reason, closed_at, closed_by)
+          values (${workspaceId}::uuid, ${leadId}::uuid, ${campaignId}, ${meetingId}, ${stage}, ${r.plan?.price_cents ?? null}, ${r.plan?.currency ?? 'USD'},
+                  ${r.plan?.name ?? null}, ${r.plan?.interval ?? null}, ${closeStatus}, ${lead.source_channel ?? null},
+                  ${stage === 'lost' ? (r.outcome === 'do_not_call' ? 'Asked not to be called' : 'Not interested after the meeting') : null},
+                  ${stage === 'lost' ? new Date() : null}, ${stage === 'lost' ? 'ai' : null})
+          on conflict (workspace_id, lead_id) do update set
+            campaign_id = coalesce(excluded.campaign_id, deals.campaign_id), meeting_id = excluded.meeting_id,
+            stage = case when deals.stage in ('won') then deals.stage else excluded.stage end,
+            value_cents = coalesce(excluded.value_cents, deals.value_cents), currency = excluded.currency,
+            plan_name = coalesce(excluded.plan_name, deals.plan_name), billing_interval = coalesce(excluded.billing_interval, deals.billing_interval),
+            close_status = case when deals.close_status in ('sent', 'sending') then deals.close_status else excluded.close_status end,
+            lost_reason = excluded.lost_reason, closed_at = coalesce(deals.closed_at, excluded.closed_at), closed_by = coalesce(deals.closed_by, excluded.closed_by),
+            updated_at = now()
+          returning id, close_status`;
+        dealId = rows[0].id as string;
+        closePending = rows[0].close_status === 'pending';
+      }
+      const minutes = r.duration ? ` (${Math.round(r.duration / 6) / 10} min)` : '';
+      const labels: Record<string, string> = {
+        agreed: `agreed to go ahead${r.plan ? ` with ${r.plan.name}` : ''}`, proposal_requested: `asked for the proposal${r.plan ? ` for ${r.plan.name}` : ''}`,
+        follow_up: 'wants to talk again later', needs_human: 'needs your team', not_interested: 'not interested',
+        do_not_call: 'asked not to be called', no_answer: 'did not answer', voicemail: 'reached voicemail',
+      };
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'meeting', 'voice', ${`AI closer meeting: ${labels[r.outcome]}${minutes}${r.summary ? `. ${r.summary}` : ''}`.slice(0, 500)}, 'ai', 'calls', ${callId}::uuid)`;
+
+      switch (r.outcome) {
+        case 'agreed': case 'proposal_requested':
+          if (!r.plan) await task(new Date());
+          break;
+        case 'needs_human':
+          await task(new Date());
+          break;
+        case 'follow_up': {
+          const t = r.followUpTime && !Number.isNaN(Date.parse(r.followUpTime)) ? new Date(r.followUpTime) : null;
+          await task(t && t.getTime() > Date.now() && t.getTime() < Date.now() + 90 * 86_400_000 ? t : new Date(Date.now() + 2 * 86_400_000));
+          break;
+        }
+        case 'not_interested':
+          await setStage('not_interested');
+          break;
+        case 'do_not_call': {
+          const phone = (meetings[0]?.phone ?? lead.phone) as string | null;
+          if (phone) await tx`insert into suppressions (workspace_id, kind, value, reason, created_by) values (${workspaceId}::uuid, 'phone', ${phone.trim()}, 'do_not_call', null) on conflict (workspace_id, kind, value) do nothing`;
+          await tx`update emails set status = 'cancelled' where workspace_id = ${workspaceId}::uuid and lead_id = ${leadId}::uuid and status in ('queued', 'approved', 'draft')`;
+          await setStage('do_not_contact');
+          break;
+        }
+        default:
+          // No answer: the team reschedules
+          await task(new Date());
+      }
+      return { leadId, name: String(lead.name), dealId, closePending, campaignId };
+    });
+  }
+
+  async dealsToClose(workspaceId: string, campaignId: string, limit: number) {
+    return (await this.sql`
+      select d.id, d.lead_id, d.plan_name, d.value_cents, d.currency, d.billing_interval, d.stripe_payment_link_id, d.payment_url, d.close_attempts,
+             l.full_name, l.email, l.stage, c.name as company_name,
+             app.is_suppressed(l.workspace_id, l.email, l.phone) as suppressed
+      from deals d
+      join leads l on l.workspace_id = d.workspace_id and l.id = d.lead_id
+      left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      where d.workspace_id = ${workspaceId}::uuid and d.campaign_id = ${campaignId}::uuid and d.close_status = 'pending'
+      order by d.updated_at limit ${limit}`) as unknown as import('./closer.ts').DealToClose[];
+  }
+
+  async claimDeal(workspaceId: string, id: string): Promise<boolean> {
+    const rows = await this.sql`
+      update deals set close_status = 'sending', close_attempts = close_attempts + 1, updated_at = now()
+      where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid and close_status = 'pending' returning id`;
+    return rows.length === 1;
+  }
+
+  async savePaymentLink(workspaceId: string, id: string, linkId: string, url: string) {
+    await this.sql`update deals set stripe_payment_link_id = ${linkId}, payment_url = ${url}, updated_at = now() where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid`;
+  }
+
+  /** Records how far closing got: everything sent, or handed to the team, or to be retried. */
+  async dealClosed(workspaceId: string, id: string, leadId: string, r: {
+    status: 'sent' | 'needs_team' | 'pending' | 'failed'; error: string | null; documentId?: string | null; activity: string;
+  }) {
+    await this.sql.begin(async (tx) => {
+      const sent = r.status === 'sent';
+      await tx`
+        update deals set close_status = ${r.status}, close_error = ${r.error?.slice(0, 400) ?? null},
+          pandadoc_document_id = coalesce(${r.documentId ?? null}, pandadoc_document_id),
+          quote_url = case when ${r.documentId ?? null}::text is not null then ${r.documentId ? `https://app.pandadoc.com/a/#/documents/${r.documentId}` : null} else quote_url end,
+          agreement_status = case when ${sent} then 'sent' else agreement_status end,
+          payment_status = case when ${sent} and payment_url is not null and payment_status = 'none' then 'link_sent' else payment_status end,
+          stage = case when ${sent} and stage in ('meeting_booked', 'meeting_held') then 'proposal_sent' else stage end,
+          updated_at = now()
+        where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid`;
+      if (r.status === 'needs_team' || r.status === 'failed') {
+        await tx`insert into follow_ups (workspace_id, lead_id, channel, due_at) values (${workspaceId}::uuid, ${leadId}::uuid, 'manual', now())`;
+      }
+      if (r.activity) {
+        await tx`
+          insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
+          values (${workspaceId}::uuid, ${leadId}::uuid, 'status_change', 'email', ${r.activity.slice(0, 500)}, 'ai', 'deals', ${id}::uuid)`;
+      }
+    });
+  }
+
+  async stripeEndpoint(workspaceId: string): Promise<{ endpoint_id: string; signing_secret: string } | null> {
+    const rows = await this.sql`select endpoint_id, signing_secret from stripe_endpoints where workspace_id = ${workspaceId}::uuid`;
+    return (rows[0] ?? null) as { endpoint_id: string; signing_secret: string } | null;
+  }
+
+  async saveStripeEndpoint(workspaceId: string, id: string, secret: string) {
+    await this.sql`
+      insert into stripe_endpoints (workspace_id, endpoint_id, signing_secret) values (${workspaceId}::uuid, ${id}, ${secret})
+      on conflict (workspace_id) do update set endpoint_id = excluded.endpoint_id, signing_secret = excluded.signing_secret`;
+  }
+
+  /** A completed payment wins the deal and the lead. Returns the lead for the alert, once. */
+  async dealPaid(workspaceId: string, linkId: string, amountCents: number | null, currency: string | null): Promise<{ leadId: string; name: string; plan: string | null; value: number | null; currency: string } | null> {
+    return this.sql.begin(async (tx) => {
+      const rows = await tx`
+        update deals set payment_status = 'paid', paid_at = now(), stage = 'won', closed_at = coalesce(closed_at, now()),
+          closed_by = coalesce(closed_by, 'ai'), value_cents = coalesce(${amountCents}, value_cents),
+          currency = coalesce(upper(${currency}), currency), updated_at = now()
+        where workspace_id = ${workspaceId}::uuid and stripe_payment_link_id = ${linkId} and payment_status <> 'paid'
+        returning id, lead_id, plan_name, value_cents, currency`;
+      if (!rows.length) return null;
+      const d = rows[0];
+      await tx`update leads set stage = 'won', stage_changed_at = now(), updated_at = now() where workspace_id = ${workspaceId}::uuid and id = ${d.lead_id}::uuid and stage <> 'won'`;
+      const lead = (await tx`select coalesce(full_name, email, phone) as name from leads where workspace_id = ${workspaceId}::uuid and id = ${d.lead_id}::uuid`)[0];
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
+        values (${workspaceId}::uuid, ${d.lead_id}::uuid, 'status_change', null, ${`Paid${d.plan_name ? ` for ${d.plan_name}` : ''}: deal won`}, 'system', 'deals', ${d.id}::uuid)`;
+      return { leadId: d.lead_id as string, name: String(lead?.name ?? ''), plan: (d.plan_name ?? null) as string | null, value: d.value_cents === null ? null : Number(d.value_cents), currency: String(d.currency) };
     });
   }
 

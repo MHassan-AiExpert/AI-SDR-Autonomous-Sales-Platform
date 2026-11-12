@@ -2,12 +2,15 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { requireWorkspace } from '@/lib/session';
 import { safeMeetingUrl } from '@/lib/replies';
+import { ActionForm, SubmitButton } from '@/components/action-form';
+import { CLOSER_STATUS_LABELS } from '@/lib/closer';
+import { setMeetingRunner } from '../actions';
 
 export const metadata: Metadata = { title: 'Meetings' };
 
 type Row = {
   id: string; lead_id: string; starts_at: string; ends_at: string | null; status: string; zoom_url: string | null; event_name: string | null;
-  run_by: string; invitee_name: string | null; invitee_email: string | null; reschedule_url: string | null;
+  run_by: string; closer_status: string; closer_note: string | null; phone: string | null; summary: string | null; invitee_name: string | null; invitee_email: string | null; reschedule_url: string | null;
   leads: { full_name: string | null; email: string | null; companies: { name: string } | null } | null;
 };
 
@@ -20,17 +23,18 @@ export default async function MeetingsPage({ params, searchParams }: { params: P
   const past = (Array.isArray(sp.view) ? sp.view[0] : sp.view) === 'past';
   const now = new Date().toISOString();
   let q = supabase.from('meetings')
-    .select('id, lead_id, starts_at, ends_at, status, zoom_url, event_name, run_by, invitee_name, invitee_email, reschedule_url, leads(full_name, email, companies(name))')
+    .select('id, lead_id, starts_at, ends_at, status, zoom_url, event_name, run_by, closer_status, closer_note, phone, summary, invitee_name, invitee_email, reschedule_url, leads(full_name, email, companies(name))')
     .eq('workspace_id', workspace.id);
   q = past ? q.lt('starts_at', now).order('starts_at', { ascending: false }) : q.gte('starts_at', now).order('starts_at', { ascending: true });
   const { data } = await q.limit(100);
   const rows = (data ?? []) as unknown as Row[];
   const base = `/w/${workspace.id}/meetings`;
+  const canAct = workspace.role !== 'viewer';
 
   return (
     <>
       <h1>Meetings</h1>
-      <p className="muted">Meetings prospects booked through their Calendly links. {workspace.ai_closer_enabled ? 'The AI closer runs them unless you hand one to your team.' : 'Your team runs them; the AI closer is switched off in Settings.'}</p>
+      <p className="muted">Meetings prospects booked through their Calendly links. {workspace.ai_closer_enabled ? 'The AI closer calls the prospect at the booked time on the number they gave for the meeting and runs it from your playbook, unless you hand it to your team. Meetings without a number go to your team.' : 'Your team runs them; the AI closer is switched off in Settings.'}</p>
       <nav className="chips" aria-label="When">
         <Link className={!past ? 'chip chip-on' : 'chip'} href={base}>Upcoming</Link>
         <Link className={past ? 'chip chip-on' : 'chip'} href={`${base}?view=past`}>Past</Link>
@@ -47,7 +51,19 @@ export default async function MeetingsPage({ params, searchParams }: { params: P
                     <td><time dateTime={m.starts_at}>{new Date(m.starts_at).toUTCString().replace(':00 GMT', '')}</time></td>
                     <td><Link href={`/w/${workspace.id}/leads/${m.lead_id}`}>{m.leads?.full_name ?? m.invitee_name ?? m.leads?.email}</Link>{m.leads?.companies?.name ? <><br /><span className="muted">{m.leads.companies.name}</span></> : null}</td>
                     <td>{m.event_name ?? 'Meeting'}{join && m.status === 'scheduled' ? <><br /><a href={join} target="_blank" rel="noopener noreferrer">Join link</a></> : null}</td>
-                    <td>{m.run_by === 'ai_closer' ? 'AI closer' : 'Your team'}</td>
+                    <td>
+                      {m.run_by === 'ai_closer' ? 'AI closer' : 'Your team'}
+                      {m.closer_status !== 'pending' || m.run_by === 'ai_closer' ? <><br /><span className="muted">{CLOSER_STATUS_LABELS[m.closer_status] ?? m.closer_status}{m.closer_note ? `: ${m.closer_note}` : ''}</span></> : null}
+                      {m.summary ? <><br /><span className="muted">{m.summary}</span></> : null}
+                      {canAct && !past && m.status === 'scheduled' && (m.closer_status === 'pending' || m.closer_status === 'handed_off') ? (
+                        <ActionForm action={setMeetingRunner}>
+                          <input type="hidden" name="workspace_id" value={workspace.id} />
+                          <input type="hidden" name="meeting_id" value={m.id} />
+                          <input type="hidden" name="run_by" value={m.run_by === 'ai_closer' ? 'human' : 'ai_closer'} />
+                          <SubmitButton variant="ghost">{m.run_by === 'ai_closer' ? 'Hand to my team' : 'Let the AI closer run it'}</SubmitButton>
+                        </ActionForm>
+                      ) : null}
+                    </td>
                     <td><span className={m.status === 'scheduled' ? 'badge badge-ok' : m.status === 'canceled' ? 'badge badge-error' : 'badge'}>{STATUS[m.status] ?? m.status}</span></td>
                   </tr>
                 );

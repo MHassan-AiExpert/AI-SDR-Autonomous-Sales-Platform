@@ -110,9 +110,9 @@ export function filtersToQuery(f: LeadFilters, overrides: Partial<LeadFilters> =
   return s ? `?${s}` : '';
 }
 
-export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies', reply_send: 'Send answers', voice_outreach: 'AI calls', sms_outreach: 'Text follow-ups' };
+export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies', reply_send: 'Send answers', voice_outreach: 'AI calls', sms_outreach: 'Text follow-ups', ai_closer: 'AI closer' };
 
-export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach', 'voice_outreach', 'sms_outreach'] as const;
+export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach', 'voice_outreach', 'sms_outreach', 'ai_closer'] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 export const JOB_STATUS_LABELS: Record<string, string> = { queued: 'Queued', running: 'Running', succeeded: 'Done', failed: 'Failed' };
 
@@ -147,6 +147,18 @@ export function describeJobResult(type: string, status: string, result: unknown,
     const reasons = obj(r.reasons);
     const held = Object.entries(reasons).map(([k, v]) => `${num(v)} ${k}`).join(', ');
     return `${plural(num(r.sent), 'text')} sent${num(r.failed) ? `, ${num(r.failed)} could not be sent` : ''}${held ? `; not texted: ${held}` : ''}.`;
+  }
+  if (type === 'ai_closer') {
+    if (typeof r.note === 'string') return r.note;
+    const parts: string[] = [];
+    if (num(r.calls_started)) parts.push(`${plural(num(r.calls_started), 'meeting')} started`);
+    if (num(r.handed_off)) parts.push(`${num(r.handed_off)} handed to your team`);
+    if (num(r.proposals_sent)) parts.push(`${plural(num(r.proposals_sent), 'proposal')} sent`);
+    if (num(r.payment_links)) parts.push(`${plural(num(r.payment_links), 'payment link')} created`);
+    if (num(r.needs_team)) parts.push(`${num(r.needs_team)} for your team to send`);
+    if (num(r.retrying)) parts.push(`${num(r.retrying)} will be retried`);
+    if (num(r.failed)) parts.push(`${num(r.failed)} could not be completed`);
+    return parts.length ? `${parts.join('; ')}.` : 'No meetings starting and no proposals to send.';
   }
   if (type === 'reply_send') {
     if (typeof r.note === 'string') return r.note;

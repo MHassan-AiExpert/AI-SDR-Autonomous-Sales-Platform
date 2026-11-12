@@ -10,6 +10,7 @@ import { ingestInstantlyEvent } from './webhooks.ts';
 import { handleCalendlyEvent } from './booking.ts';
 import { handleVapiEvent } from './voice.ts';
 import { handleTwilioEvent } from './texting.ts';
+import { handleStripeEvent } from './closer.ts';
 
 const MAX_SKEW_SECONDS = 300;
 
@@ -126,6 +127,25 @@ export function createAgentServer(deps: Deps, options: ServerOptions): Server {
         const result = await handleTwilioEvent({ store: deps.store, webhookBaseUrl: deps.webhookBaseUrl }, parsed.token, parsed.raw, parsed.signature);
         if (result.status === 'unknown_workspace') return send(404, { error: 'Not found' });
         if (result.status === 'bad_signature') return send(401, { error: 'Invalid Twilio signature' });
+        return send(200, { status: result.status });
+      }
+      if (req.method === 'POST' && req.url === '/webhooks/stripe') {
+        let body: string;
+        try {
+          body = await readBody(req, 600_000);
+        } catch {
+          return send(413, { error: 'Request too large' });
+        }
+        if (!verifySignature(options.hmacSecret, header(req, 'x-timestamp'), header(req, 'x-signature'), body)) return send(401, { error: 'Invalid signature' });
+        let parsed: { token?: unknown; raw?: unknown; signature?: unknown };
+        try {
+          parsed = JSON.parse(body);
+        } catch {
+          return send(400, { error: 'Invalid JSON' });
+        }
+        const result = await handleStripeEvent({ store: deps.store, fetchImpl: deps.fetchImpl, appUrl: deps.appUrl }, parsed.token, parsed.raw, parsed.signature);
+        if (result.status === 'unknown_workspace') return send(404, { error: 'Not found' });
+        if (result.status === 'bad_signature') return send(401, { error: 'Invalid Stripe signature' });
         return send(200, { status: result.status });
       }
       if (req.method === 'POST' && req.url === '/webhooks/calendly') {

@@ -41,6 +41,12 @@ export async function bookingLinkFor(deps: BookingDeps, workspaceId: string, cam
 export type CalendlyResult = { status: 'booked' | 'canceled' | 'duplicate' | 'ignored' | 'unknown_workspace' | 'bad_signature' };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** "+1 (512) 555-0101" to "+15125550101"; only numbers with a country code are kept. */
+export function meetingPhone(v: string | undefined): string | null {
+  if (!v) return null;
+  const n = v.trim().replace(/[\s().-]/g, '').replace(/^00/, '+');
+  return /^\+[1-9]\d{6,14}$/.test(n) ? n : null;
+}
 const calendlyUrl = (v: unknown) => { const s = str(v); return s && /^https:\/\/calendly\.com\//.test(s) ? s : null; };
 
 /** Handles a Calendly invitee.created / invitee.canceled notification. */
@@ -80,11 +86,15 @@ export async function handleCalendlyEvent(deps: BookingDeps, token: unknown, raw
   const start = str(ev.start_time);
   if (!start || Number.isNaN(Date.parse(start))) { await store.markEvent(stored, 'failed', 'Missing start time'); return { status: 'ignored' }; }
   const joinUrl = str(loc.join_url);
+  // The number the prospect gave for this meeting: Calendly's "we call you" location, or a phone question
+  const answers = Array.isArray(p.questions_and_answers) ? p.questions_and_answers.filter(isObject) : [];
+  const phone = meetingPhone(loc.type === 'outbound_call' ? str(loc.location) : undefined)
+    ?? meetingPhone(str(answers.find((a) => /phone|mobile|number/i.test(str(a.question) ?? ''))?.answer));
   const meetingId = await store.saveMeeting(ws, lead.id, {
     externalId: inviteeUri, startsAt: start, endsAt: str(ev.end_time) ?? null, eventName: str(ev.name)?.slice(0, 200) ?? null,
     inviteeName: str(p.name)?.slice(0, 200) ?? null, inviteeEmail: str(p.email)?.toLowerCase() ?? null,
     joinUrl: joinUrl && /^https:\/\//.test(joinUrl) ? joinUrl.slice(0, 1000) : null,
-    cancelUrl: calendlyUrl(p.cancel_url), rescheduleUrl: calendlyUrl(p.reschedule_url),
+    cancelUrl: calendlyUrl(p.cancel_url), rescheduleUrl: calendlyUrl(p.reschedule_url), phone,
   });
   await store.markEvent(stored, 'processed', null);
 

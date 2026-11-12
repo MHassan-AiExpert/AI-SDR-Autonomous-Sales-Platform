@@ -18,9 +18,10 @@ import { runReplyHandling as handleReplies } from './replies.ts';
 import { runReplySend as sendAnswers } from './answers.ts';
 import { runVoiceOutreach as callLeads, VoiceError } from './voice.ts';
 import { runTextOutreach as textLeads, TextError } from './texting.ts';
+import { runCloser as close } from './closer.ts';
 import type { Resolver } from './sources/website.ts';
 
-export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; scheduleHours?: number; appUrl?: string; webhookBaseUrl?: string; voiceModel?: string };
+export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; scheduleHours?: number; appUrl?: string; webhookBaseUrl?: string; voiceModel?: string; pandadocPauseMs?: number };
 
 export class JobError extends Error {}
 
@@ -222,11 +223,12 @@ export const runReplyHandling = (deps: Deps, job: Job) => withCampaign(deps, job
 export const runReplySend = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => sendAnswers(deps, job, c));
 export const runVoiceOutreach = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => callLeads(deps, job, c));
 export const runTextOutreach = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => textLeads(deps, job, c));
+export const runAiCloser = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => close(deps, job, c));
 
 const HANDLERS = {
   campaign_plan: runCampaignPlan, lead_sourcing: runLeadSourcing, enrichment: runEnrichment, research: runResearch,
   copywriting: runCopywriting, email_outreach: runEmailOutreach, reply_handling: runReplyHandling, reply_send: runReplySend, voice_outreach: runVoiceOutreach,
-  sms_outreach: runTextOutreach,
+  sms_outreach: runTextOutreach, ai_closer: runAiCloser,
 } as const;
 
 // After a job succeeds, the next stage of the pipeline starts by itself

@@ -10,6 +10,7 @@ import { ruleClass } from './replies.ts';
 import type { Deps } from './jobs.ts';
 import type { Campaign, Job, Store } from './store.ts';
 import { log } from './log.ts';
+import { handleCloserResult } from './closer.ts';
 
 export class VoiceError extends Error {}
 
@@ -146,7 +147,7 @@ export async function runVoiceOutreach(deps: Deps, job: Job, campaign: Campaign)
 
 // ---------------------------------------------------------------- results
 
-const OPT_OUT_CALL = /\b(don'?t|do not|never) (call|ring|phone)\b|\bstop calling\b|\bremove (my|this) number\b|\bput me on (your|the) do not call\b/i;
+export const OPT_OUT_CALL = /\b(don'?t|do not|never) (call|ring|phone)\b|\bstop calling\b|\bremove (my|this) number\b|\bput me on (your|the) do not call\b/i;
 
 type Outcome = 'interested' | 'callback' | 'not_interested' | 'wrong_number' | 'do_not_call' | 'voicemail' | 'no_answer' | 'failed';
 
@@ -204,8 +205,15 @@ export async function handleVapiEvent(deps: { store: Store; fetchImpl?: Deps['fe
   const ended = str(msg.endedAt) ?? str(call.endedAt);
   const duration = typeof msg.durationSeconds === 'number' ? Math.round(msg.durationSeconds)
     : started && ended ? Math.max(0, Math.round((Date.parse(ended) - Date.parse(started)) / 1000)) : null;
-  const { outcome, meeting } = callOutcome(str(msg.endedReason) ?? '', structured, transcript);
   const summary = (str(analysis.summary) ?? str(structured.notes) ?? '').slice(0, 1000) || null;
+  if (ours.agent === 'closer') {
+    await handleCloserResult(deps, ws, ours.id, {
+      endedReason: str(msg.endedReason) ?? '', structured, transcript, summary, recordingUrl, duration, endedAt: ended ?? null, startedAt: started ?? null,
+    });
+    await store.markEvent(stored, 'processed', null);
+    return { status: 'stored' };
+  }
+  const { outcome, meeting } = callOutcome(str(msg.endedReason) ?? '', structured, transcript);
 
   const lead = await store.finishCall(ws, ours.id, {
     outcome, meeting, summary, transcript: transcript || null, recordingUrl, duration, endedReason: str(msg.endedReason)?.slice(0, 120) ?? null,

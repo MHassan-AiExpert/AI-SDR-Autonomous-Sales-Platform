@@ -12,6 +12,7 @@ import { parseEmailSettings, outreachReadiness } from '@/lib/outreach';
 import { BOOKING_EVENT_TYPE } from '@/lib/replies';
 import { parseVoiceSettings, voiceReadiness } from '@/lib/voice';
 import { parseTextSettings, textReadiness } from '@/lib/texting';
+import { closerAssistantSchema } from '@/lib/closer';
 
 const NO_PERMISSION = 'Only owners and admins can manage campaigns.';
 
@@ -69,6 +70,7 @@ export async function queueAgentJob(_prev: FormState, form: FormData): Promise<F
     email_outreach: 'Approved emails will be handed to Instantly within a minute.',
     voice_outreach: 'The AI caller will start calls within a minute, if it is inside calling hours.',
     sms_outreach: 'Text follow-ups will go out within a minute, if it is inside contact hours.',
+    ai_closer: 'The AI closer will check for meetings starting now and proposals to send within a minute.',
   };
   return { notice: notices[type] };
 }
@@ -329,4 +331,21 @@ export async function setTextStatus(_prev: FormState, form: FormData): Promise<F
   if (status === 'live') await supabase.from('agent_jobs').insert({ workspace_id: ws.data, campaign_id: campaignId.data, type: 'sms_outreach', requested_by: user.id });
   revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
   return { notice: status === 'live' ? 'Text follow-ups are live. They go out in the next contact window.' : 'Text follow-ups paused.' };
+}
+
+export async function saveCloserSettings(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  const raw = String(form.get('vapi_closer_assistant_id') ?? '').trim();
+  const parsed = raw ? closerAssistantSchema.safeParse(raw) : null;
+  if (parsed && !parsed.success) return { error: firstError(parsed.error) };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('campaigns')
+    .update({ vapi_closer_assistant_id: parsed?.success ? parsed.data : null, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data).eq('id', campaignId.data).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
+  return { notice: parsed ? 'Closer saved.' : 'Closer removed. Meetings for this campaign go to your team.' };
 }

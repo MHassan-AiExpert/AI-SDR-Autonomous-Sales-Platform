@@ -5,6 +5,7 @@ import { friendlyDbError } from '@/lib/errors';
 import type { FormState } from '@/lib/form-state';
 import { requireUser } from '@/lib/session';
 import { addMemberSchema, firstError, parseSettingsForm, roleSchema, uuidSchema } from '@/lib/validation';
+import { parsePlaybook } from '@/lib/closer';
 
 const NO_PERMISSION = 'You do not have permission to do that.';
 
@@ -176,4 +177,37 @@ export async function setCallConsent(_prev: FormState, form: FormData): Promise<
   revalidatePath(`/w/${workspaceId}/leads/${leadId.data}`);
   const what = channel === 'voice' ? 'called' : channel === 'sms' ? 'sent SMS follow-ups' : 'sent WhatsApp follow-ups';
   return { notice: basis === 'withdraw' ? `Consent removed. This lead will not be ${what}.` : `Consent recorded. This lead may be ${what}.` };
+}
+
+export async function savePlaybook(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  if (!workspaceId) return { error: 'Workspace not found.' };
+  const parsed = parsePlaybook(form);
+  if (!parsed.success) return { error: firstError(parsed.error) };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc('playbook_publish', { ws: workspaceId, p_content: parsed.data });
+  if (error?.code === '42501') return { error: 'Only owners and admins can change the playbook.' };
+  if (error) return { error: friendlyDbError(error) };
+  revalidatePath(`/w/${workspaceId}/playbook`);
+  return { notice: `Playbook version ${data} is live. The AI closer and copywriter use it from now on.` };
+}
+
+export async function setMeetingRunner(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  const meetingId = uuidSchema.safeParse(form.get('meeting_id'));
+  const runner = form.get('run_by');
+  if (!workspaceId || !meetingId.success) return { error: 'Meeting not found.' };
+  if (runner !== 'human' && runner !== 'ai_closer') return { error: 'Choose who runs the meeting.' };
+  const { supabase } = await requireUser();
+  // Only meetings that have not started can change hands
+  const { data, error } = await supabase.from('meetings')
+    .update(runner === 'human' ? { run_by: 'human', closer_status: 'handed_off', closer_note: 'Taken by your team', updated_at: new Date().toISOString() }
+      : { run_by: 'ai_closer', closer_status: 'pending', closer_note: null, updated_at: new Date().toISOString() })
+    .eq('workspace_id', workspaceId).eq('id', meetingId.data).eq('status', 'scheduled').in('closer_status', ['pending', 'handed_off'])
+    .gt('starts_at', new Date().toISOString())
+    .select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: 'This meeting has already started or you cannot change it.' };
+  revalidatePath(`/w/${workspaceId}/meetings`);
+  return { notice: runner === 'human' ? 'Your team runs this meeting. It is on your task list.' : 'The AI closer will run this meeting.' };
 }

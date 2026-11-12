@@ -249,7 +249,20 @@ test('INF-25 the Twilio text events workflow forwards the signed form body and a
   assert.match(code, /x-twilio-signature/);
   assert.match(code, /createHmac\('sha256', \$env\.PLATFORM_HMAC_SECRET\)/);
   assert.match(wf.nodes.find((n) => n.type === 'n8n-nodes-base.httpRequest').parameters.url, /\/webhooks\/twilio/);
+  assert.ok(planImport(new URL('infra/n8n/workflows', root).pathname).workflows.some((w) => w.id === 'aisdrTwilioEvnt1'));
+});
+
+test('INF-26 the Stripe payment events workflow forwards the raw signed body and Stripe-Signature', () => {
+  const wf = JSON.parse(readFileSync(new URL('infra/n8n/workflows/stripe-events.json', root), 'utf8'));
+  const hook = wf.nodes.find((n) => n.type === 'n8n-nodes-base.webhook').parameters;
+  assert.equal(hook.path, 'stripe/:token');
+  assert.equal(hook.options.rawBody, true);
+  const code = wf.nodes.find((n) => n.type === 'n8n-nodes-base.code').parameters.jsCode;
+  assert.match(code, /getBinaryDataBuffer\(i, 'data'\)/);
+  assert.match(code, /stripe-signature/);
+  assert.match(code, /createHmac\('sha256', \$env\.PLATFORM_HMAC_SECRET\)/);
+  assert.match(wf.nodes.find((n) => n.type === 'n8n-nodes-base.httpRequest').parameters.url, /\/webhooks\/stripe/);
   const ids = planImport(new URL('infra/n8n/workflows', root).pathname).workflows.map((w) => w.id);
-  assert.equal(ids.length, 5);
-  assert.equal(new Set(ids).size, 5);
+  assert.equal(ids.length, 6);
+  assert.equal(new Set(ids).size, 6);
 });
