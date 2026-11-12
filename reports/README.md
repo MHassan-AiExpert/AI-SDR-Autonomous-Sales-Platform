@@ -13,6 +13,6 @@ Every feature of the platform ships with three documents:
 | ID | Feature | SRS reference | Automated tests |
 | --- | --- | --- | --- |
 | [F01](F01-infrastructure-stack/feature-report.md) | Infrastructure stack: n8n queue mode, Redis job queue, workers | Section 10.2, 10.8 | 14 passed |
-| [F02](F02-multi-tenant-database/feature-report.md) | Multi-tenant database with row-level security | Section 7, 9, 10.1, M15, M20, M21, M23 | 42 passed |
+| [F02](F02-multi-tenant-database/feature-report.md) | Multi-tenant database with row-level security | Section 7, 9, 10.1, M15, M20, M21, M23 | 43 passed + 4 live checks |
 
 Run every test with `npm test`.

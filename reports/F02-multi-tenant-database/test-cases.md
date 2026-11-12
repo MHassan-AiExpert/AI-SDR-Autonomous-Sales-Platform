@@ -6,7 +6,8 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 | --- | --- |
 | Test suites | `tests/db/tenancy.test.mjs`, `tests/db/sales-data.test.mjs` |
 | Command | `npm run test:db` |
-| Result | **42 passed, 0 failed** |
+| Result | **43 passed, 0 failed** |
+| Live database | Schema applied to the hosted Supabase project (PostgreSQL 17); 4 live checks passed |
 | Method | The real migration files are applied to an in-process PostgreSQL. Each test runs as a specific signed-in user, an anonymous visitor or the backend service role. |
 
 ## Test data
@@ -21,10 +22,11 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 
 | ID | Test case | Expected result | Actual |
 | --- | --- | --- | --- |
-| DB-01 | Migrations apply cleanly in order | Both migrations run without error | Pass |
+| DB-01 | Migrations apply cleanly in order | All three migrations run without error | Pass |
 | DB-02 | Every public table has row-level security enabled | No table without RLS | Pass |
 | DB-03 | Every tenant table carries a mandatory `workspace_id` | All 18 tenant tables have a non-null `workspace_id` | Pass |
 | DB-04 | Every table has at least one policy | No table without a policy | Pass |
+| DB-43 | Every function in the `app` schema pins its `search_path` | No function with a mutable search path | Pass |
 
 ## Workspaces
 
@@ -113,3 +115,14 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 | --- | --- | --- | --- |
 | DB-41 | Update a lead | `updated_at` refreshed | Pass |
 | DB-42 | Owner deletes Company A's workspace | All Company A rows removed from 12 tables; Company B's rows unchanged | Pass |
+
+## Live database verification
+
+Run against the hosted Supabase project after the migrations were applied.
+
+| ID | Check | Expected result | Actual |
+| --- | --- | --- | --- |
+| LIVE-01 | Compare the live schema with the repository migrations: 225 columns, 74 policies, 121 constraints, 55 indexes, 9 functions, 14 triggers, by checksum | Identical checksums in every category | Pass |
+| LIVE-02 | Tables without RLS; table privileges held by anonymous visitors; write privileges on audit and run logs for signed-in users | Zero in each | Pass |
+| LIVE-03 | Supabase security advisor | No findings | Pass |
+| LIVE-04 | Smoke test inside a rolled-back transaction: user A creates a workspace and a lead; user B reads leads and workspaces, inserts into and updates workspace A | A is owner and sees 1 lead; B sees 0 leads and 0 workspaces; insert blocked; update affects 0 rows; membership audited | Pass |

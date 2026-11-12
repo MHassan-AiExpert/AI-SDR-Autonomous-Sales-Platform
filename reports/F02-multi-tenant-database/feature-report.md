@@ -8,7 +8,8 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 | SRS reference | Section 7 (data model), Section 9 (multi-tenancy), Section 10.1 (access control), M15, M20, M21, M23 |
 | Location | `supabase/migrations/`, `tests/db/` |
 | Database | PostgreSQL (Supabase) |
-| Automated tests | 42 passed, 0 failed |
+| Automated tests | 43 passed, 0 failed |
+| Deployment | Applied to the hosted Supabase project (us-east-1, PostgreSQL 17) |
 
 ## 1. Summary
 
@@ -147,4 +148,4 @@ Migrations are plain SQL, run in file-name order and are never edited after rele
 
 ## 9. Verification
 
-42 automated tests apply the real migrations to PostgreSQL and exercise them as each role, as an outsider, as an anonymous visitor and as the service role (see `test-cases.md`).
+43 automated tests apply the real migrations to PostgreSQL and exercise them as each role, as an outsider, as an anonymous visitor and as the service role. The schema is also applied to the hosted Supabase project, where its checksum matches the repository, the security advisor reports no findings and a live isolation smoke test passes (see `test-cases.md`).

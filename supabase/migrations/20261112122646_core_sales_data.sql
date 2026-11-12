@@ -442,7 +442,7 @@ end $$;
 alter table public.run_logs enable row level security;
 create policy run_logs_select on public.run_logs for select to authenticated
   using (app.has_role(workspace_id, array['owner', 'admin']::public.workspace_role[]));
-revoke all on public.run_logs from anon;
+revoke all on public.run_logs from anon, authenticated;
 grant select on public.run_logs to authenticated;
 grant all on public.run_logs to service_role;
 

@@ -19,7 +19,7 @@ before(async () => {
 
 // ---------------------------------------------------------------- structure
 test('DB-01 migrations apply cleanly in order', () => {
-  assert.equal(migrationFiles().length, 2);
+  assert.equal(migrationFiles().length, 3);
 });
 
 test('DB-02 every public table has row-level security enabled', async () => {
@@ -34,6 +34,14 @@ test('DB-03 every tenant table carries a mandatory workspace_id', async () => {
     select table_name from information_schema.columns
     where table_schema = 'public' and column_name = 'workspace_id' and is_nullable = 'NO'`);
   assert.deepEqual(rows.map((r) => r.table_name).sort(), [...TENANT_TABLES].sort());
+});
+
+test('DB-43 every function in the app schema pins its search_path', async () => {
+  const { rows } = await db.query(`
+    select p.proname from pg_proc p
+    where p.pronamespace = 'app'::regnamespace
+      and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c where c like 'search_path=%')`);
+  assert.deepEqual(rows, []);
 });
 
 test('DB-04 every table with RLS has at least one policy', async () => {

@@ -137,6 +137,7 @@ create trigger workspaces_add_owner after insert on public.workspaces
 
 -- -----------------------------------------------------------------------------
 -- A workspace must always keep at least one owner
+-- (when the workspace itself is deleted, the cascade is let through)
 -- -----------------------------------------------------------------------------
 create function app.protect_last_owner()
 returns trigger
@@ -151,7 +152,6 @@ begin
   if tg_op = 'UPDATE' and new.role = 'owner' then
     return new;
   end if;
-  -- Workspace itself is being deleted: let the cascade through.
   if not exists (select 1 from public.workspaces w where w.id = old.workspace_id) then
     return coalesce(new, old);
   end if;
@@ -316,5 +316,6 @@ grant execute on function app.has_role(uuid, public.workspace_role[]) to authent
 
 revoke all on public.agencies, public.workspaces, public.workspace_members, public.audit_log from anon;
 grant select, insert, update, delete on public.agencies, public.workspaces, public.workspace_members to authenticated;
+revoke all on public.audit_log from authenticated;
 grant select on public.audit_log to authenticated;
 grant all on public.agencies, public.workspaces, public.workspace_members, public.audit_log to service_role;
