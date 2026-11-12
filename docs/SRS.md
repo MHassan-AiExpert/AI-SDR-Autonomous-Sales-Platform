@@ -46,7 +46,8 @@ This document defines what the system must do, how it is structured, and how it 
 **Out of scope (version 1)**
 
 - General customer support lines (the inbound AI receptionist covers sales calls from marketing campaigns)
-- Building a custom CRM, email-sending, telephony or video-meeting infrastructure
+- A full general-purpose CRM (custom objects, post-sale customer accounts, support tickets); the built-in sales workspace covers leads, timelines, tasks and deals
+- Building custom email-sending, telephony or video-meeting infrastructure
 - Paid ad campaigns
 - Legal advice on each company's outreach obligations (the platform enforces the rules; each company confirms its own compliance)
 - Third-party tool costs: domains, mailboxes, phone numbers, minutes, messages and API credits (paid by each company)
@@ -228,7 +229,7 @@ Each requirement has an ID so it can be referenced during the build and in chang
 
 **M9. CRM sync**
 
-- FR-9.1 Create or update the contact, company and deal in the CRM (HubSpot, Pipedrive, GoHighLevel or Airtable).
+- FR-9.1 The built-in sales workspace (M15 and M20) is the system of record, so a company needs no other CRM. Optionally, create or update the contact, company and deal in an external CRM (HubSpot, Pipedrive, GoHighLevel or Airtable).
 - FR-9.2 Log every email, SMS and call (with recording, transcript and summary), plus every reply, classification, status change and meeting.
 - FR-9.3 Move leads through pipeline stages automatically.
 

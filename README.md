@@ -312,15 +312,58 @@ Compliance rules always apply and cannot be switched off.
 
 ```
 AI-SDR-Autonomous-Sales-Platform/
-├── README.md        Project overview, architecture and flows
-└── docs/
-    └── SRS.md       Full Software Requirements Specification (26 modules)
+├── README.md                    Project overview, architecture and flows
+├── docs/
+│   └── SRS.md                   Full Software Requirements Specification (26 modules)
+├── infra/
+│   ├── docker-compose.yml       n8n queue mode, Redis job queue, workers, PostgreSQL
+│   └── .env.example             Configuration template
+├── supabase/
+│   └── migrations/              Multi-tenant schema with row-level security
+├── tests/
+│   ├── infra/                   Stack configuration tests
+│   └── db/                      Tenant isolation, role and data-integrity tests
+├── reports/                     Feature report, use cases and test cases per feature
+└── .github/workflows/ci.yml     Runs every test on each push
 ```
+
+---
+
+## Getting Started
+
+```bash
+git clone https://github.com/MHassan-AiExpert/AI-SDR-Autonomous-Sales-Platform.git
+cd AI-SDR-Autonomous-Sales-Platform
+npm install
+
+# 1. Run the test suite (infrastructure + database)
+npm test
+
+# 2. Start the orchestration stack
+cp infra/.env.example infra/.env        # replace every change-me value
+npm run infra:up                        # n8n on http://localhost:5678
+
+# 3. Apply the database schema
+npx supabase start
+npx supabase db reset
+```
+
+---
+
+## Engineering Reports
+
+Each feature is delivered with a feature report, use cases and test cases in [`reports/`](reports/README.md).
+
+| ID | Feature | Tests |
+| --- | --- | --- |
+| [F01](reports/F01-infrastructure-stack/feature-report.md) | Infrastructure stack: n8n queue mode, Redis job queue, scalable workers | 14 passed |
+| [F02](reports/F02-multi-tenant-database/feature-report.md) | Multi-tenant database with row-level security and four roles | 42 passed |
 
 ---
 
 ## Documentation
 
+- **[Feature reports](reports/README.md):** design, use cases and test cases for every feature
 - **[Software Requirements Specification](docs/SRS.md):** scope, users and roles, architecture, end-to-end flow, all functional requirements (M1–M26), data model, integrations, non-functional requirements, production infrastructure and operations, compliance, build phases and acceptance criteria
 
 ---

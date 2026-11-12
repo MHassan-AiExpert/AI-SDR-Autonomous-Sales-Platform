@@ -1,0 +1,22 @@
+{
+  "name": "ai-sdr-autonomous-sales-platform",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Autonomous multi-tenant AI SDR platform: lead sourcing, omnichannel outreach, AI voice agents and AI closer",
+  "author": "Muhammad Hassan",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "test:infra": "node --test \"tests/infra/*.test.mjs\"",
+    "test:db": "node --test \"tests/db/*.test.mjs\"",
+    "infra:up": "docker compose -f infra/docker-compose.yml --env-file infra/.env up -d",
+    "infra:down": "docker compose -f infra/docker-compose.yml --env-file infra/.env down",
+    "infra:ps": "docker compose -f infra/docker-compose.yml --env-file infra/.env ps",
+    "infra:scale": "docker compose -f infra/docker-compose.yml --env-file infra/.env up -d --scale n8n-worker=4"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.16",
+    "yaml": "^2.6.0"
+  }
+}
