@@ -4,6 +4,7 @@
 
 import postgres from 'postgres';
 import type { CampaignPlan } from './plan.ts';
+import { nextStage } from './replies.ts';
 import { identityKeys, type ExistingKeys, type LeadCandidate, type Suppressions } from './leads.ts';
 
 export type Sql = postgres.Sql;
@@ -23,7 +24,7 @@ export type Job = {
   id: string;
   workspace_id: string;
   campaign_id: string;
-  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send';
+  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach';
   attempts: number;
   correlation_id: string;
 };
@@ -56,6 +57,17 @@ export type Campaign = {
   instantly_state: 'active' | 'paused' | null;
   auto_answer: boolean;
   booking_event_type: string | null;
+  voice_status: string;
+  vapi_assistant_id: string | null;
+  vapi_phone_number_id: string | null;
+  call_timezone: string;
+  call_window_start: string;
+  call_window_end: string;
+  call_days: Record<string, boolean>;
+  call_daily_limit: number;
+  call_max_attempts: number;
+  call_rule: 'consent_only' | 'consent_or_business_landline';
+  dnc_attested_at: string | Date | null;
 };
 
 export class Store {
@@ -77,7 +89,8 @@ export class Store {
       select id, workspace_id, name, niche, offer, target_areas, daily_lead_limit, score_threshold, icp, source_plan,
              status, mode, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start,
              send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state,
-             auto_answer, booking_event_type
+             auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start,
+             call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at
       from campaigns where workspace_id = ${workspaceId}::uuid and id = ${campaignId}::uuid`;
     if (!rows.length) return null;
     const c = rows[0] as unknown as Campaign;
@@ -242,7 +255,7 @@ export class Store {
     return Number(rows[0].n);
   }
 
-  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send'): Promise<boolean> {
+  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach'): Promise<boolean> {
     const rows = await this.sql`select agent_job_enqueue(${workspaceId}::uuid, ${campaignId}::uuid, ${type}) as ok`;
     return rows[0].ok === true;
   }
@@ -374,9 +387,9 @@ export class Store {
     return String(rows[0]?.automation_mode ?? 'autopilot');
   }
 
-  async workspaceState(workspaceId: string): Promise<{ outreach_paused: boolean; enabled_channels: Record<string, boolean> }> {
-    const rows = await this.sql`select outreach_paused, enabled_channels from workspaces where id = ${workspaceId}::uuid`;
-    return { outreach_paused: rows[0]?.outreach_paused === true, enabled_channels: (rows[0]?.enabled_channels ?? {}) as Record<string, boolean> };
+  async workspaceState(workspaceId: string): Promise<{ name: string; outreach_paused: boolean; enabled_channels: Record<string, boolean> }> {
+    const rows = await this.sql`select name, outreach_paused, enabled_channels from workspaces where id = ${workspaceId}::uuid`;
+    return { name: String(rows[0]?.name ?? ''), outreach_paused: rows[0]?.outreach_paused === true, enabled_channels: (rows[0]?.enabled_channels ?? {}) as Record<string, boolean> };
   }
 
   async activePlaybook(workspaceId: string): Promise<unknown> {
@@ -479,7 +492,7 @@ export class Store {
     return rows[0]?.id ?? null;
   }
 
-  async insertInboundEvent(workspaceId: string, campaignId: string | null, type: string, leadEmail: string | null, payload: Record<string, unknown>, dedupe: string, status: 'received' | 'ignored', provider: 'instantly' | 'calendly' = 'instantly'): Promise<string | null> {
+  async insertInboundEvent(workspaceId: string, campaignId: string | null, type: string, leadEmail: string | null, payload: Record<string, unknown>, dedupe: string, status: 'received' | 'ignored', provider: 'instantly' | 'calendly' | 'vapi' = 'instantly'): Promise<string | null> {
     const rows = await this.sql`
       insert into inbound_events (workspace_id, campaign_id, provider, event_type, lead_email, payload, dedupe_key, status, processed_at)
       values (${workspaceId}::uuid, ${campaignId}, ${provider}, ${type}, ${leadEmail}, ${this.sql.json(payload as postgres.JSONValue)}, ${dedupe}, ${status},
@@ -705,6 +718,113 @@ export class Store {
       await tx`
         insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
         values (${workspaceId}::uuid, ${leadId}::uuid, 'meeting', 'email', 'Meeting cancelled by the prospect', 'system', 'meetings', ${rows[0].id}::uuid)`;
+    });
+  }
+
+  // ---------------------------------------------------------------- calls
+
+  async callsToday(workspaceId: string, campaignId: string): Promise<number> {
+    const rows = await this.sql`
+      select count(*)::int n from calls where workspace_id = ${workspaceId}::uuid and campaign_id = ${campaignId}::uuid
+        and direction = 'outbound' and created_at >= date_trunc('day', now())`;
+    return rows[0].n as number;
+  }
+
+  /** Qualified leads not yet in a conversation, with their call attempts so far. */
+  async callableLeads(workspaceId: string, campaignId: string, threshold: number, maxAttempts: number, limit: number) {
+    return (await this.sql`
+      select l.id, l.full_name, l.title, l.phone, l.phone_line_type, l.consent, c.name as company_name, l.ai_report,
+             count(k.id)::int as attempts, max(k.created_at) as last_call_at,
+             app.is_suppressed(l.workspace_id, l.email, l.phone) as suppressed
+      from leads l
+      left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      left join calls k on k.workspace_id = l.workspace_id and k.lead_id = l.id and k.direction = 'outbound'
+      where l.workspace_id = ${workspaceId}::uuid and l.campaign_id = ${campaignId}::uuid
+        and l.stage in ('new', 'contacted') and l.score >= ${threshold}
+        and l.phone is not null and l.phone_checked_at is not null and coalesce(l.phone_line_type, 'unknown') <> 'unknown'
+        and not exists (select 1 from calls d where d.workspace_id = l.workspace_id and d.lead_id = l.id
+                          and d.outcome in ('interested', 'callback', 'not_interested', 'wrong_number', 'do_not_call', 'booked'))
+        and not exists (select 1 from calls q where q.workspace_id = l.workspace_id and q.lead_id = l.id and q.status in ('queued', 'ringing', 'in_progress'))
+      group by l.id, c.name
+      having count(k.id) < ${maxAttempts}
+      order by count(k.id), l.score desc, l.created_at
+      limit ${limit}`) as unknown as import('./voice.ts').CallLead[];
+  }
+
+  async insertCall(workspaceId: string, campaignId: string, leadId: string, phone: string, attempt: number, basis: string): Promise<string | null> {
+    const rows = await this.sql`
+      insert into calls (workspace_id, lead_id, campaign_id, agent, direction, to_number, provider, status, attempt, idempotency_key, analysis)
+      values (${workspaceId}::uuid, ${leadId}::uuid, ${campaignId}::uuid, 'caller', 'outbound', ${phone}, 'vapi', 'queued', ${attempt},
+              ${`${campaignId}:${leadId}:call:${attempt}`}, ${this.sql.json({ consent_basis: basis })})
+      on conflict (workspace_id, idempotency_key) do nothing
+      returning id`;
+    return rows[0]?.id ?? null;
+  }
+
+  async callStarted(workspaceId: string, id: string, providerId: string) {
+    await this.sql`update calls set provider_call_id = ${providerId}, status = 'ringing', started_at = now() where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid`;
+  }
+
+  async callFailed(workspaceId: string, id: string, error: string) {
+    await this.sql`update calls set status = 'failed', outcome = 'failed', error = ${error}, ended_at = now() where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid`;
+  }
+
+  async callByProviderId(workspaceId: string, providerId: string): Promise<{ id: string; lead_id: string; campaign_id: string | null } | null> {
+    const rows = await this.sql`select id, lead_id, campaign_id from calls where workspace_id = ${workspaceId}::uuid and provider = 'vapi' and provider_call_id = ${providerId}`;
+    return (rows[0] ?? null) as { id: string; lead_id: string; campaign_id: string | null } | null;
+  }
+
+  async callStatus(workspaceId: string, id: string, status: 'ringing' | 'in_progress') {
+    await this.sql`update calls set status = ${status} where workspace_id = ${workspaceId}::uuid and id = ${id}::uuid and status in ('queued', 'ringing')`;
+  }
+
+  /** Stores the call result and applies it to the lead. Returns the lead for alerts. */
+  async finishCall(workspaceId: string, callId: string, r: {
+    outcome: string; meeting: boolean; summary: string | null; transcript: string | null; recordingUrl: string | null; duration: number | null;
+    endedReason: string | null; endedAt: string | null; startedAt: string | null; analysis: Record<string, unknown>; callbackTime: string | null;
+  }): Promise<{ id: string; name: string } | null> {
+    return this.sql.begin(async (tx) => {
+      const rows = await tx`
+        update calls set status = 'ended', outcome = ${r.outcome}, summary = ${r.summary}, transcript = ${r.transcript}, recording_url = ${r.recordingUrl},
+          duration_seconds = ${r.duration}, ended_reason = ${r.endedReason}, ended_at = coalesce(${r.endedAt}::timestamptz, now()),
+          started_at = coalesce(${r.startedAt}::timestamptz, started_at),
+          analysis = coalesce(analysis, '{}'::jsonb) || ${tx.json(r.analysis as postgres.JSONValue)}
+        where workspace_id = ${workspaceId}::uuid and id = ${callId}::uuid
+        returning lead_id`;
+      if (!rows.length) return null;
+      const leadId = rows[0].lead_id as string;
+      const leads = await tx`select id, stage, phone, email, coalesce(full_name, email, phone) as name from leads where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid`;
+      const lead = leads[0];
+      const label = r.outcome.replace(/_/g, ' ');
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'call', 'voice',
+                ${`AI call: ${r.meeting ? 'wants a meeting' : label}${r.duration ? ` (${Math.round(r.duration / 60 * 10) / 10} min)` : ''}${r.summary ? `. ${r.summary}` : ''}`.slice(0, 500)},
+                'ai', 'calls', ${callId}::uuid)`;
+      const setStage = async (target: string) => {
+        const next = nextStage(String(lead.stage), target);
+        if (next !== lead.stage) await tx`update leads set stage = ${next}, stage_changed_at = now(), updated_at = now() where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid`;
+      };
+      if (r.outcome === 'do_not_call') {
+        if (lead.phone) {
+          await tx`insert into suppressions (workspace_id, kind, value, reason, created_by) values (${workspaceId}::uuid, 'phone', ${String(lead.phone).toLowerCase().trim()}, 'do_not_call', null) on conflict (workspace_id, kind, value) do nothing`;
+        }
+        await tx`update emails set status = 'cancelled' where workspace_id = ${workspaceId}::uuid and lead_id = ${leadId}::uuid and status in ('queued', 'approved', 'draft')`;
+        await setStage('do_not_contact');
+      } else if (r.outcome === 'interested') {
+        await setStage('interested');
+        await tx`insert into follow_ups (workspace_id, lead_id, channel, due_at) values (${workspaceId}::uuid, ${leadId}::uuid, 'manual', now())`;
+      } else if (r.outcome === 'callback') {
+        await setStage('engaged');
+        const t = r.callbackTime && !Number.isNaN(Date.parse(r.callbackTime)) ? new Date(r.callbackTime) : null;
+        const due = t && t.getTime() > Date.now() && t.getTime() < Date.now() + 60 * 86_400_000 ? t : new Date(Date.now() + 86_400_000);
+        await tx`insert into follow_ups (workspace_id, lead_id, channel, due_at) values (${workspaceId}::uuid, ${leadId}::uuid, 'voice', ${due})`;
+      } else if (r.outcome === 'not_interested') {
+        await setStage('not_interested');
+      } else if (r.outcome === 'wrong_number') {
+        await tx`update leads set phone_line_type = 'unknown', updated_at = now() where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid`;
+      }
+      return { id: leadId, name: String(lead.name) };
     });
   }
 

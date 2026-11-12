@@ -110,9 +110,9 @@ export function filtersToQuery(f: LeadFilters, overrides: Partial<LeadFilters> =
   return s ? `?${s}` : '';
 }
 
-export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies', reply_send: 'Send answers' };
+export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies', reply_send: 'Send answers', voice_outreach: 'AI calls' };
 
-export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach'] as const;
+export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach', 'voice_outreach'] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 export const JOB_STATUS_LABELS: Record<string, string> = { queued: 'Queued', running: 'Running', succeeded: 'Done', failed: 'Failed' };
 
@@ -135,6 +135,12 @@ export function describeJobResult(type: string, status: string, result: unknown,
     const n = num(r.leads_written);
     if (!n && !num(r.failed)) return 'No new qualified leads to write to.';
     return `${plural(n, 'email sequence')} written${r.waiting_for_approval === true ? ', waiting for approval' : ' and approved'}${num(r.failed) ? `; ${num(r.failed)} could not be written and will be retried` : ''}.`;
+  }
+  if (type === 'voice_outreach') {
+    if (typeof r.note === 'string') return r.note;
+    const reasons = obj(r.reasons);
+    const held = Object.entries(reasons).map(([k, v]) => `${num(v)} ${k}`).join(', ');
+    return `${plural(num(r.calls_started), 'call')} started${num(r.failed) ? `, ${num(r.failed)} could not start` : ''}${held ? `; not called: ${held}` : ''}.`;
   }
   if (type === 'reply_send') {
     if (typeof r.note === 'string') return r.note;

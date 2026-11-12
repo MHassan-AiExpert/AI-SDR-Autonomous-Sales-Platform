@@ -1,0 +1,66 @@
+{
+  "id": "aisdrVapiEvents1",
+  "name": "Vapi call events",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vapi/:token",
+        "responseMode": "onReceived",
+        "responseCode": 200,
+        "options": {}
+      },
+      "id": "9c4e5d3a-4a61-4e3c-9d43-3b2c8c2e0301",
+      "name": "Vapi webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "c5f3e4d6-7d8a-4b92-8cb3-d4e5f6a7b803"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Forward call results with the workspace token, signed so only n8n can deliver them.\nconst crypto = require('crypto');\nreturn $input.all().map((item) => {\n  const body = JSON.stringify({ token: String(item.json.params?.token ?? ''), event: item.json.body ?? {} });\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = crypto.createHmac('sha256', $env.PLATFORM_HMAC_SECRET).update(`${timestamp}.${body}`).digest('hex');\n  return { json: { timestamp, body, signature } };\n});"
+      },
+      "id": "9c4e5d3a-4a61-4e3c-9d43-3b2c8c2e0302",
+      "name": "Sign event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AGENT_SERVICE_URL }}/webhooks/vapi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-timestamp", "value": "={{ $json.timestamp }}" },
+            { "name": "x-signature", "value": "={{ $json.signature }}" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": { "timeout": 30000, "response": { "response": { "neverError": true } } }
+      },
+      "id": "9c4e5d3a-4a61-4e3c-9d43-3b2c8c2e0303",
+      "name": "Deliver to agent service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0]
+    }
+  ],
+  "connections": {
+    "Vapi webhook": { "main": [[{ "node": "Sign event", "type": "main", "index": 0 }]] },
+    "Sign event": { "main": [[{ "node": "Deliver to agent service", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "timezone": "UTC"
+  },
+  "active": true
+}

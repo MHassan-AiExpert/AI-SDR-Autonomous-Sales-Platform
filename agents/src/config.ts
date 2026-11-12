@@ -8,6 +8,7 @@ export type Config = {
   scheduleHours: number;
   appUrl?: string;
   webhookBaseUrl?: string;
+  voiceModel: string;
   models: { openai: string; anthropic: string | null; gemini: string };
 };
 
@@ -26,6 +27,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     appUrl: /^https?:\/\/[^\s/]+$/.test(env.PUBLIC_APP_URL ?? '') ? env.PUBLIC_APP_URL : undefined,
     // Public HTTPS address of n8n; Calendly notifications are sent to <this>/webhook/calendly/<token>
     webhookBaseUrl: /^https:\/\/[^\s/]+$/.test(env.WEBHOOK_BASE_URL ?? '') ? env.WEBHOOK_BASE_URL : undefined,
+    // Model the voice agent thinks with during calls (the voice itself is set on the Vapi assistant)
+    voiceModel: /^[a-z0-9.\-]{3,60}$/.test(env.VOICE_MODEL ?? '') ? env.VOICE_MODEL! : 'gpt-4o-mini',
     scheduleHours: Math.min(Math.max(Number(env.SCHEDULE_HOURS ?? 24) || 0, 0), 168),
     models: {
       openai: env.OPENAI_MODEL || 'gpt-4.1-mini',

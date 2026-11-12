@@ -228,3 +228,11 @@ test('INF-23 the Calendly events workflow forwards the raw signed body and Calen
   assert.match(http.url, /\/webhooks\/calendly/);
   assert.equal(services['agent-service'].environment.WEBHOOK_BASE_URL, '${N8N_PUBLIC_URL:-}');
 });
+
+test('INF-24 the Vapi call events workflow forwards call results signed', () => {
+  const wf = JSON.parse(readFileSync(new URL('infra/n8n/workflows/vapi-events.json', root), 'utf8'));
+  assert.equal(wf.nodes.find((n) => n.type === 'n8n-nodes-base.webhook').parameters.path, 'vapi/:token');
+  assert.match(wf.nodes.find((n) => n.type === 'n8n-nodes-base.code').parameters.jsCode, /createHmac\('sha256', \$env\.PLATFORM_HMAC_SECRET\)/);
+  assert.match(wf.nodes.find((n) => n.type === 'n8n-nodes-base.httpRequest').parameters.url, /\/webhooks\/vapi/);
+  assert.equal(new Set(planImport(new URL('infra/n8n/workflows', root).pathname).workflows.map((w) => w.id)).size, 4);
+});

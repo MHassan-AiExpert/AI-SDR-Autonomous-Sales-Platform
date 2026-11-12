@@ -10,6 +10,7 @@ import { JOB_TYPES, parseCampaignForm, scoreThreshold, type JobType } from '@/li
 import { firstError, uuidSchema } from '@/lib/validation';
 import { parseEmailSettings, outreachReadiness } from '@/lib/outreach';
 import { BOOKING_EVENT_TYPE } from '@/lib/replies';
+import { parseVoiceSettings, voiceReadiness } from '@/lib/voice';
 
 const NO_PERMISSION = 'Only owners and admins can manage campaigns.';
 
@@ -65,6 +66,7 @@ export async function queueAgentJob(_prev: FormState, form: FormData): Promise<F
     research: 'The research agent will research and score new leads within a minute.',
     copywriting: 'The copywriting agent will write emails for new qualified leads within a minute.',
     email_outreach: 'Approved emails will be handed to Instantly within a minute.',
+    voice_outreach: 'The AI caller will start calls within a minute, if it is inside calling hours.',
   };
   return { notice: notices[type] };
 }
@@ -226,4 +228,55 @@ export async function saveReplySettings(_prev: FormState, form: FormData): Promi
   if (!data?.length) return { error: NO_PERMISSION };
   revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
   return { notice: 'Reply settings saved.' };
+}
+
+export async function saveVoiceSettings(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  const parsed = parseVoiceSettings(form);
+  if (!parsed.success) return { error: firstError(parsed.error) };
+  const { attest, ...fields } = parsed.data;
+  const { supabase } = await requireUser();
+  const { data: current } = await supabase.from('campaigns').select('dnc_attested_at').eq('workspace_id', ws.data).eq('id', campaignId.data).maybeSingle();
+  // The database stamps who attested and when; the value sent here only switches it on or off
+  const attestation = attest ? (current?.dnc_attested_at ?? new Date().toISOString()) : null;
+  const { data, error } = await supabase.from('campaigns')
+    .update({ ...fields, dnc_attested_at: attestation, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data).eq('id', campaignId.data).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
+  return { notice: 'Calling settings saved.' };
+}
+
+export async function setVoiceStatus(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  const status = form.get('status');
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  if (status !== 'live' && status !== 'paused') return { error: 'Unknown status.' };
+  const { supabase, user } = await requireUser();
+  if (status === 'live') {
+    const [{ data: c }, { data: w }, { data: tools }] = await Promise.all([
+      supabase.from('campaigns').select('vapi_assistant_id, vapi_phone_number_id, status').eq('workspace_id', ws.data).eq('id', campaignId.data).maybeSingle(),
+      supabase.from('workspaces').select('enabled_channels').eq('id', ws.data).maybeSingle(),
+      supabase.from('integrations').select('status').eq('workspace_id', ws.data).eq('tool', 'vapi'),
+    ]);
+    if (!c || !w) return { error: 'Campaign not found.' };
+    const { items, ready } = voiceReadiness({
+      vapiConnected: (tools ?? []).some((t) => t.status === 'connected'),
+      voiceChannelOn: (w.enabled_channels as Record<string, boolean>)?.voice !== false,
+      assistantId: c.vapi_assistant_id, phoneNumberId: c.vapi_phone_number_id,
+    });
+    if (!ready) return { error: `Before launching calls: ${items.filter((i) => !i.done).map((i) => i.label.toLowerCase()).join('; ')}.` };
+    if (c.status !== 'active') return { error: 'Resume the campaign before launching calls.' };
+  }
+  const { data, error } = await supabase.from('campaigns').update({ voice_status: status, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data).eq('id', campaignId.data).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  if (status === 'live') await supabase.from('agent_jobs').insert({ workspace_id: ws.data, campaign_id: campaignId.data, type: 'voice_outreach', requested_by: user.id });
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
+  return { notice: status === 'live' ? 'AI calling is live. Calls start in the next calling window.' : 'AI calling paused. Calls already in progress finish normally.' };
 }

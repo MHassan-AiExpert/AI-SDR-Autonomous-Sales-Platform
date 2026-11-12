@@ -16,9 +16,10 @@ import { runCopywriting as copywrite, CopyError } from './copywriting.ts';
 import { runEmailOutreach as outreach, OutreachError } from './outreach.ts';
 import { runReplyHandling as handleReplies } from './replies.ts';
 import { runReplySend as sendAnswers } from './answers.ts';
+import { runVoiceOutreach as callLeads, VoiceError } from './voice.ts';
 import type { Resolver } from './sources/website.ts';
 
-export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; scheduleHours?: number; appUrl?: string; webhookBaseUrl?: string };
+export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; scheduleHours?: number; appUrl?: string; webhookBaseUrl?: string; voiceModel?: string };
 
 export class JobError extends Error {}
 
@@ -209,7 +210,7 @@ async function withCampaign<T>(deps: Deps, job: Job, fn: (campaign: NonNullable<
   try {
     return await fn(campaign);
   } catch (err) {
-    if (err instanceof CopyError || err instanceof OutreachError) throw new JobError(err.message);
+    if (err instanceof CopyError || err instanceof OutreachError || err instanceof VoiceError) throw new JobError(err.message);
     throw err;
   }
 }
@@ -218,10 +219,11 @@ export const runCopywriting = (deps: Deps, job: Job) => withCampaign(deps, job, 
 export const runEmailOutreach = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => outreach(deps, job, c));
 export const runReplyHandling = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => handleReplies(deps, job, c));
 export const runReplySend = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => sendAnswers(deps, job, c));
+export const runVoiceOutreach = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => callLeads(deps, job, c));
 
 const HANDLERS = {
   campaign_plan: runCampaignPlan, lead_sourcing: runLeadSourcing, enrichment: runEnrichment, research: runResearch,
-  copywriting: runCopywriting, email_outreach: runEmailOutreach, reply_handling: runReplyHandling, reply_send: runReplySend,
+  copywriting: runCopywriting, email_outreach: runEmailOutreach, reply_handling: runReplyHandling, reply_send: runReplySend, voice_outreach: runVoiceOutreach,
 } as const;
 
 // After a job succeeds, the next stage of the pipeline starts by itself

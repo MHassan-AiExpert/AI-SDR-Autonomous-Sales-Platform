@@ -7,7 +7,7 @@ const config = loadConfig();
 const sql = connect(config.databaseUrl);
 const store = new Store(sql);
 const server = createAgentServer(
-  { store, models: config.models, scheduleHours: config.scheduleHours, appUrl: config.appUrl, webhookBaseUrl: config.webhookBaseUrl },
+  { store, models: config.models, scheduleHours: config.scheduleHours, appUrl: config.appUrl, webhookBaseUrl: config.webhookBaseUrl, voiceModel: config.voiceModel },
   { hmacSecret: config.hmacSecret, jobsPerRun: config.jobsPerRun, healthCheck: async () => { await sql`select 1`; } },
 );
 

@@ -4,6 +4,9 @@ import { notFound } from 'next/navigation';
 import { requireWorkspace } from '@/lib/session';
 import { uuidSchema } from '@/lib/validation';
 import { EMAIL_STATUS_LABELS } from '@/lib/outreach';
+import { CONSENT_BASES, CONSENT_LABELS, OUTCOME_LABELS, safeRecordingUrl, type ConsentBasis } from '@/lib/voice';
+import { ActionForm, SubmitButton } from '@/components/action-form';
+import { setCallConsent } from '../../actions';
 import { ANSWER_LABELS, REPLY_LABELS, replyBadge, safeConversationUrl, safeMeetingUrl, type ReplyClass } from '@/lib/replies';
 import { LINE_TYPE_LABELS, SOURCE_LABELS, STAGE_LABELS, VERIFICATION_LABELS, readLeadReport, type LeadSource, type LeadStage, type VerificationStatus } from '@/lib/campaigns';
 
@@ -13,7 +16,7 @@ type Lead = {
   id: string; full_name: string | null; title: string | null; email: string | null; phone: string | null;
   phone_line_type: string | null; phone_country: string | null; linkedin_url: string | null; social_handles: Record<string, string> | null;
   source_channel: LeadSource; source_query: string | null; stage: LeadStage; verification_status: VerificationStatus;
-  score: number | null; ai_report: unknown; created_at: string; campaign_id: string | null;
+  score: number | null; ai_report: unknown; created_at: string; campaign_id: string | null; consent: Record<string, unknown> | null;
   companies: { name: string; domain: string | null; industry: string | null; size_band: string | null; location: string | null; google_rating: number | null; google_reviews: number | null } | null;
   campaigns: { name: string; score_threshold: number } | null;
 };
@@ -27,7 +30,7 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
 
   const { data } = await supabase
     .from('leads')
-    .select('id, full_name, title, email, phone, phone_line_type, phone_country, linkedin_url, social_handles, source_channel, source_query, stage, verification_status, score, ai_report, created_at, campaign_id, companies(name, domain, industry, size_band, location, google_rating, google_reviews), campaigns(name, score_threshold)')
+    .select('id, consent, full_name, title, email, phone, phone_line_type, phone_country, linkedin_url, social_handles, source_channel, source_query, stage, verification_status, score, ai_report, created_at, campaign_id, companies(name, domain, industry, size_band, location, google_rating, google_reviews), campaigns(name, score_threshold)')
     .eq('workspace_id', workspace.id)
     .eq('id', leadId)
     .maybeSingle();
@@ -46,6 +49,15 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
     .eq('lead_id', lead.id)
     .order('created_at', { ascending: false })
     .limit(20);
+  const { data: calls } = await supabase
+    .from('calls')
+    .select('id, created_at, outcome, status, duration_seconds, summary, transcript, recording_url, agent, direction')
+    .eq('workspace_id', workspace.id)
+    .eq('lead_id', lead.id)
+    .order('created_at', { ascending: false })
+    .limit(20);
+  const canAct = workspace.role !== 'viewer';
+  const consentBasis = typeof lead.consent?.voice === 'string' ? (lead.consent.voice as ConsentBasis) : null;
   const { data: meetings } = await supabase
     .from('meetings')
     .select('id, starts_at, status, zoom_url, event_name, run_by')
@@ -135,6 +147,39 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
             {sequence[0]?.campaign_id ? <p><Link href={`${base}/campaigns/${sequence[0].campaign_id}/emails?status=${sequence[0].status === 'queued' ? 'queued' : sequence[0].status}`}>Review in the campaign</Link></p> : null}
           </>
         )}
+      </section>
+
+      <section className="card stack" aria-labelledby="calls">
+        <h2 id="calls">Calls</h2>
+        <p className="muted">Consent to be called: <strong>{consentBasis ? CONSENT_LABELS[consentBasis] ?? consentBasis : 'none recorded'}</strong></p>
+        {canAct ? (
+          <ActionForm action={setCallConsent} className="row">
+            <input type="hidden" name="workspace_id" value={workspace.id} />
+            <input type="hidden" name="lead_id" value={lead.id} />
+            <label className="field"><span className="sr-only">Consent basis</span>
+              <select name="basis" defaultValue={consentBasis ?? ''}>
+                <option value="" disabled>Record consent…</option>
+                {CONSENT_BASES.map((b) => <option key={b} value={b}>{CONSENT_LABELS[b]}</option>)}
+                {consentBasis ? <option value="withdraw">Remove consent</option> : null}
+              </select>
+            </label>
+            <SubmitButton variant="secondary">Save</SubmitButton>
+          </ActionForm>
+        ) : null}
+        {!calls?.length ? <p className="muted">No calls yet.</p> : calls.map((k) => {
+          const rec = safeRecordingUrl(k.recording_url);
+          return (
+            <article key={k.id} className="stack">
+              <div className="spread">
+                <strong>{k.agent === 'caller' ? 'AI call' : k.agent === 'closer' ? 'AI closer' : 'Call'} · {new Date(k.created_at).toUTCString()}</strong>
+                <span className="badge">{k.outcome ? OUTCOME_LABELS[k.outcome] ?? k.outcome : k.status}</span>
+              </div>
+              {k.summary ? <p>{k.summary}</p> : null}
+              <p className="muted">{k.duration_seconds ? `${Math.round(k.duration_seconds / 6) / 10} min` : ''}{rec ? <> · <a href={rec} target="_blank" rel="noopener noreferrer">Recording</a></> : null}</p>
+              {k.transcript ? <details><summary>Transcript</summary><p className="pre">{k.transcript}</p></details> : null}
+            </article>
+          );
+        })}
       </section>
 
       <section className="card stack" aria-labelledby="meetings">
