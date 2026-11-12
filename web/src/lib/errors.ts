@@ -16,6 +16,7 @@ export function friendlyDbError(error: ErrorLike, fallback = 'Something went wro
         ? 'This person is already a member of the workspace.'
         : 'That already exists.';
     case '23514':
+      if (error.message === 'Invalid credentials') return 'Those credentials are not valid.';
       return error.message?.includes('at least one owner')
         ? 'A workspace must keep at least one owner.'
         : 'That value is not allowed.';

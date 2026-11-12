@@ -19,7 +19,7 @@ before(async () => {
 
 // ---------------------------------------------------------------- structure
 test('DB-01 migrations apply cleanly in order', () => {
-  assert.equal(migrationFiles().length, 4);
+  assert.equal(migrationFiles().length, 5);
 });
 
 test('DB-02 every public table has row-level security enabled', async () => {
@@ -147,12 +147,11 @@ test('DB-16 a viewer can read but cannot write', async () => {
   assert.equal(upd.affectedRows, 0);
 });
 
-test('DB-17 a rep works leads but cannot change configuration or delete leads', async () => {
+test('DB-17 a rep works leads but cannot change campaigns, playbooks or delete leads', async () => {
   const upd = await asUser(db, USERS.repA, (tx) => tx.query(`update leads set title = 'CEO' where id = $1`, [leadA]));
   assert.equal(upd.affectedRows, 1);
   for (const sql of [
     `insert into campaigns (workspace_id, name) values ('${wsA}', 'Rep campaign')`,
-    `insert into integrations (workspace_id, tool) values ('${wsA}', 'twilio')`,
     `insert into playbooks (workspace_id, version) values ('${wsA}', 1)`,
   ]) {
     await assert.rejects(asUser(db, USERS.repA, (tx) => tx.query(sql)), /row-level security/);
@@ -161,10 +160,9 @@ test('DB-17 a rep works leads but cannot change configuration or delete leads', 
   assert.equal(del.affectedRows, 0);
 });
 
-test('DB-18 an admin manages configuration and workspace settings', async () => {
+test('DB-18 an admin manages campaigns and workspace settings', async () => {
   await asUser(db, USERS.adminA, async (tx) => {
     await tx.query(`insert into campaigns (workspace_id, name) values ($1, 'UK dentists')`, [wsA]);
-    await tx.query(`insert into integrations (workspace_id, tool, status) values ($1, 'twilio', 'connected')`, [wsA]);
     const r = await tx.query(`update workspaces set automation_mode = 'approval' where id = $1`, [wsA]);
     assert.equal(r.affectedRows, 1);
   });

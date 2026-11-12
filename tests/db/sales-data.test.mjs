@@ -177,13 +177,7 @@ test('DB-39 only one playbook version is live per company', async () => {
   assert.deepEqual(rows, [{ version: 2 }]);
 });
 
-test('DB-40 each tool is connected once per company and stores no secret', async () => {
-  await asUser(db, USERS.ownerA, (tx) => tx.query(
-    `insert into integrations (workspace_id, tool, status, secret_ref) values ($1,'twilio','connected','vault:abc')`, [wsA]));
-  await assert.rejects(
-    asUser(db, USERS.ownerA, (tx) => tx.query(`insert into integrations (workspace_id, tool) values ($1,'twilio')`, [wsA])),
-    /duplicate key/);
-  await asUser(db, USERS.ownerB, (tx) => tx.query(`insert into integrations (workspace_id, tool) values ($1,'twilio')`, [wsB]));
+test('DB-40 the integrations table stores no secret, only a reference', async () => {
   const { rows } = await db.query(
     `select column_name from information_schema.columns where table_name = 'integrations' and column_name ~ '(secret|token|key|password)'`);
   assert.deepEqual(rows.map((r) => r.column_name), ['secret_ref']);

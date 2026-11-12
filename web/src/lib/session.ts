@@ -20,6 +20,7 @@ export type WorkspaceContext = {
   ai_closer_enabled: boolean;
   outreach_paused: boolean;
   enabled_channels: Record<string, boolean>;
+  setup_checklist: Record<string, unknown>;
   role: Role;
 };
 
@@ -35,7 +36,7 @@ export const requireWorkspace = cache(async (workspaceId: string) => {
   const [{ data: workspace }, { data: membership }] = await Promise.all([
     supabase
       .from('workspaces')
-      .select('id, name, plan, automation_mode, ai_closer_enabled, outreach_paused, enabled_channels')
+      .select('id, name, plan, automation_mode, ai_closer_enabled, outreach_paused, enabled_channels, setup_checklist')
       .eq('id', workspaceId)
       .maybeSingle(),
     supabase

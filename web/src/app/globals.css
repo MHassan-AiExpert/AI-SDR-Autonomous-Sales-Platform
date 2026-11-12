@@ -134,3 +134,17 @@ input:focus-visible, select:focus-visible, .btn:focus-visible, a:focus-visible {
   padding: 14px 0; border-top: 1px solid var(--border);
 }
 .member-email { font-weight: 600; overflow-wrap: anywhere; }
+
+.spread { justify-content: space-between; }
+h3 { font-size: 1rem; margin: 0; }
+.badge-ok, .badge-connected { background: var(--ok-bg); color: var(--ok-text); border-color: transparent; }
+.badge-error, .badge-expired { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); border-color: transparent; }
+.progress { height: 10px; background: var(--border); border-radius: 999px; overflow: hidden; }
+.progress-bar { height: 100%; background: var(--accent); transition: width 0.3s ease; }
+.tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.tool { border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.facts { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 0.88rem; }
+.connect summary { cursor: pointer; font-weight: 600; color: var(--accent); padding: 6px 0; }
+.connect[open] summary { margin-bottom: 10px; }
+.connect .stack + form { margin-top: 8px; }
+fieldset.plain { border: 0; margin: 0; padding: 0; min-width: 0; }

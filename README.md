@@ -368,6 +368,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F01](reports/F01-infrastructure-stack/feature-report.md) | Infrastructure stack: n8n queue mode, Redis job queue, scalable workers | 14 passed |
 | [F02](reports/F02-multi-tenant-database/feature-report.md) | Multi-tenant database with row-level security and four roles | 43 passed |
 | [F03](reports/F03-web-auth-workspaces/feature-report.md) | Web app: sign-in, workspaces, team roles, channel switches and kill switch | 47 passed |
+| [F04](reports/F04-onboarding-integrations/feature-report.md) | Guided onboarding: 16 tools tested before saving, credentials encrypted in Supabase Vault | 60 passed |
 
 ---
 

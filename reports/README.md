@@ -15,5 +15,6 @@ Every feature of the platform ships with three documents:
 | [F01](F01-infrastructure-stack/feature-report.md) | Infrastructure stack: n8n queue mode, Redis job queue, workers | Section 10.2, 10.8 | 14 passed |
 | [F02](F02-multi-tenant-database/feature-report.md) | Multi-tenant database with row-level security | Section 7, 9, 10.1, M15, M20, M21, M23 | 43 passed + 4 live checks |
 | [F03](F03-web-auth-workspaces/feature-report.md) | Web app: sign-in, workspaces, team roles, channel switches and kill switch | Section 10.1, M21, M23 | 47 passed + 1 live check |
+| [F04](F04-onboarding-integrations/feature-report.md) | Guided onboarding: 16 tool connections tested live and stored in Vault, setup checklist, progress | M23, Section 10.1 | 60 passed + 5 live checks |
 
 Run the infrastructure and database tests with `npm test`, and the web app tests with `cd web && npm test`.
