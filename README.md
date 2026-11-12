@@ -317,7 +317,8 @@ AI-SDR-Autonomous-Sales-Platform/
 │   └── SRS.md                   Full Software Requirements Specification (26 modules)
 ├── infra/
 │   ├── docker-compose.yml       n8n queue mode, Redis job queue, workers, agent service
-│   ├── n8n/workflows/           Scheduler workflow that signs and triggers agent runs
+│   ├── n8n/workflows/           All n8n workflows as JSON, imported automatically on start
+│   ├── n8n/import-workflows.mjs One-shot importer: loads and publishes the workflows
 │   └── .env.example             Configuration template
 ├── agents/                      Agent service: AI setup agent and lead-finder agents
 │   ├── src/                     LLM failover, source adapters, normalisation, job runner, HTTP API
@@ -353,7 +354,7 @@ cd agents && npm install && npm test && cd ..
 # 3. Start the orchestration stack and agent service
 cp infra/.env.example infra/.env        # replace every change-me value
 npm run infra:up                        # n8n on http://localhost:5678
-# then import infra/n8n/workflows/agent-scheduler.json in n8n and activate it
+# every workflow in infra/n8n/workflows is imported and published on start
 
 # 4. Apply the database schema
 npx supabase start
@@ -377,7 +378,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F02](reports/F02-multi-tenant-database/feature-report.md) | Multi-tenant database with row-level security and four roles | 43 passed |
 | [F03](reports/F03-web-auth-workspaces/feature-report.md) | Web app: sign-in, workspaces, team roles, channel switches and kill switch | 47 passed |
 | [F04](reports/F04-onboarding-integrations/feature-report.md) | Guided onboarding: 16 tools tested before saving, credentials encrypted in Supabase Vault | 60 passed |
-| [F05](reports/F05-lead-sourcing/feature-report.md) | AI setup agent and lead sourcing across Apollo, Google Maps, Instagram and LLM search, with de-duplication, suppression and lead screens | 98 passed |
+| [F05](reports/F05-lead-sourcing/feature-report.md) | AI setup agent and lead sourcing across Apollo, Google Maps, Instagram and LLM search, with de-duplication, suppression and lead screens | 101 passed |
 
 ---
 

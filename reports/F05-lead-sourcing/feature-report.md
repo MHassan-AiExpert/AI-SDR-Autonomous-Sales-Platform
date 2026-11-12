@@ -7,7 +7,7 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 | Feature ID | F05 |
 | SRS reference | M1 (FR-1.1, 1.3, 1.4, 1.6), M2 (FR-2.1 to 2.7), M14 (FR-14.1 to 14.5), M15 (lead timeline), Section 10 (queue, retries, logging, failover, pooling) |
 | Location | `agents/` (agent service), `supabase/migrations/20261112175255_agent_jobs.sql`, `infra/docker-compose.yml` (`agent-service`), `infra/n8n/workflows/agent-scheduler.json`, `web/src/app/w/[workspaceId]/campaigns/`, `web/src/app/w/[workspaceId]/leads/`, `web/src/lib/campaigns.ts` |
-| Automated tests | 15 database, 55 agent service, 8 web unit, 4 infrastructure, 16 browser: 98 passed, 0 failed |
+| Automated tests | 15 database, 55 agent service, 8 web unit, 7 infrastructure, 16 browser: 101 passed, 0 failed |
 | Live checks | Job queue table, access rules and claim function verified on the hosted database |
 
 ## 1. Summary
@@ -122,7 +122,7 @@ Signed-out visitors are sent to sign-in and returned to the same page, now inclu
 | `OPENAI_MODEL`, `GEMINI_MODEL` | `infra/.env` | Optional overrides (defaults `gpt-4.1-mini`, `gemini-2.5-flash`) |
 | `ANTHROPIC_MODEL` | `infra/.env` | Anthropic is used once this names a current model id |
 
-Import `infra/n8n/workflows/agent-scheduler.json` into n8n and activate it to start the minute-by-minute runs.
+Every workflow lives in `infra/n8n/workflows/` with a fixed id. On each start, the one-shot `n8n-import` container imports them all (updating, never duplicating) and publishes those marked `"active": true`, then the main n8n instance starts. The repository is the source of truth: a change made only in the n8n editor is replaced on the next start, so export it back into that folder.
 
 ## 10. Design decisions
 

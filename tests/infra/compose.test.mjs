@@ -2,6 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { planImport } from '../../infra/n8n/import-workflows.mjs';
 
 const root = new URL('../../', import.meta.url);
 const composeText = readFileSync(new URL('infra/docker-compose.yml', root), 'utf8');
@@ -9,8 +13,8 @@ const compose = parse(composeText, { merge: true });
 const envExample = readFileSync(new URL('infra/.env.example', root), 'utf8');
 const services = compose.services;
 
-test('INF-01 stack defines database, queue, main instance, workers and the agent service', () => {
-  assert.deepEqual(Object.keys(services).sort(), ['agent-service', 'n8n', 'n8n-postgres', 'n8n-worker', 'redis']);
+test('INF-01 stack defines database, queue, workflow import, main instance, workers and the agent service', () => {
+  assert.deepEqual(Object.keys(services).sort(), ['agent-service', 'n8n', 'n8n-import', 'n8n-postgres', 'n8n-worker', 'redis']);
 });
 
 test('INF-02 every image is pinned to an exact version', () => {
@@ -24,8 +28,9 @@ test('INF-03 main instance and workers run the same n8n version', () => {
   assert.equal(services.n8n.image, services['n8n-worker'].image);
 });
 
-test('INF-04 every service has a health check and a restart policy', () => {
+test('INF-04 every long-running service has a health check and a restart policy', () => {
   for (const [name, svc] of Object.entries(services)) {
+    if (name === 'n8n-import') continue; // one-shot job, covered by INF-19
     assert.ok(svc.healthcheck?.test, `${name} needs a healthcheck`);
     assert.equal(svc.restart, 'unless-stopped', `${name} needs a restart policy`);
   }
@@ -151,4 +156,46 @@ test('INF-18 the scheduler workflow signs a run request every minute', () => {
   assert.deepEqual(headers, ['content-type', 'x-signature', 'x-timestamp']);
   assert.equal(workflow.settings.saveDataSuccessExecution, 'none');
   assert.deepEqual(Object.keys(workflow.connections).sort(), ['Every minute', 'Sign request']);
+});
+
+test('INF-19 workflows are imported by a one-shot job before n8n starts', () => {
+  const job = services['n8n-import'];
+  assert.equal(job.image, services.n8n.image);
+  assert.equal(job.restart, 'no');
+  assert.deepEqual(job.entrypoint, ['node', '/import/import-workflows.mjs']);
+  assert.ok(job.volumes.includes('./n8n/workflows:/workflows:ro'));
+  assert.ok(job.volumes.includes('./n8n/import-workflows.mjs:/import/import-workflows.mjs:ro'));
+  assert.equal(job.environment.DB_POSTGRESDB_HOST, 'n8n-postgres');
+  assert.equal(job.environment.N8N_ENCRYPTION_KEY, services.n8n.environment.N8N_ENCRYPTION_KEY);
+  assert.equal(job.depends_on['n8n-postgres'].condition, 'service_healthy');
+  assert.equal(services.n8n.depends_on['n8n-import'].condition, 'service_completed_successfully');
+  assert.equal(job.ports, undefined);
+});
+
+test('INF-20 every workflow in the repository is valid for import, with a fixed unique id', () => {
+  const { workflows, commands } = planImport(new URL('infra/n8n/workflows', root).pathname);
+  assert.ok(workflows.length >= 1);
+  assert.equal(new Set(workflows.map((w) => w.id)).size, workflows.length);
+  assert.deepEqual(commands[0], ['import:workflow', '--separate', `--input=${new URL('infra/n8n/workflows', root).pathname}`]);
+  assert.ok(commands.some((c) => c[0] === 'publish:workflow' && c[1] === '--id=aisdrAgentSched1'));
+});
+
+test('INF-21 the importer rejects bad files and publishes only active workflows', () => {
+  const dir = () => mkdtempSync(join(tmpdir(), 'wf-'));
+  const wf = (over) => JSON.stringify({ id: 'abcdefghij123456', name: 'A', nodes: [{}], active: false, ...over });
+  const d1 = dir();
+  writeFileSync(join(d1, 'a.json'), wf({ id: 'abcdefghij123456', active: true }));
+  writeFileSync(join(d1, 'b.json'), wf({ id: 'bbcdefghij123456' }));
+  writeFileSync(join(d1, 'notes.txt'), 'ignored');
+  assert.deepEqual(planImport(d1).commands.slice(1), [['publish:workflow', '--id=abcdefghij123456']]);
+  const d2 = dir();
+  writeFileSync(join(d2, 'a.json'), wf({}));
+  writeFileSync(join(d2, 'b.json'), wf({}));
+  assert.throws(() => planImport(d2), /used by another workflow/);
+  for (const [over, msg] of [[{ id: 'short' }, /16 letters/], [{ name: '' }, /name/], [{ nodes: [] }, /nodes/], [{ active: 'yes' }, /active/]]) {
+    const d = dir();
+    writeFileSync(join(d, 'x.json'), wf(over));
+    assert.throws(() => planImport(d), msg);
+  }
+  assert.deepEqual(planImport(dir()).commands, []);
 });

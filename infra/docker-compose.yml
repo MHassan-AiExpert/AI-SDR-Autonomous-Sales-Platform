@@ -93,6 +93,25 @@ services:
       retries: 10
     networks: [internal]
 
+  # One-shot: loads every workflow in infra/n8n/workflows into n8n, then exits.
+  # The repository is the source of truth; edits made only in the editor are
+  # replaced on the next start, so export changes back into that folder.
+  n8n-import:
+    image: *n8n-image
+    restart: "no"
+    entrypoint: ["node", "/import/import-workflows.mjs"]
+    environment:
+      <<: *n8n-env
+      WORKFLOWS_DIR: /workflows
+    volumes:
+      - ./n8n/workflows:/workflows:ro
+      - ./n8n/import-workflows.mjs:/import/import-workflows.mjs:ro
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      n8n-postgres:
+        condition: service_healthy
+    networks: [internal]
+
   n8n:
     image: *n8n-image
     restart: unless-stopped
@@ -108,6 +127,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      n8n-import:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz || exit 1"]
       interval: 15s

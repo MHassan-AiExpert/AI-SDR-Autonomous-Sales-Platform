@@ -7,10 +7,10 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 | Database: job queue (`tests/db/agent-jobs.test.mjs`) | `npm run test:db` | **15 passed, 0 failed** |
 | Agent service (`agents/tests/*.test.ts`) | `cd agents && npm test` | **55 passed, 0 failed** |
 | Web unit (`web/tests/campaigns.test.ts`) | `cd web && npm test` | **8 passed, 0 failed** |
-| Infrastructure (`tests/infra/compose.test.mjs`, INF-15 to INF-18) | `npm run test:infra` | **4 passed, 0 failed** (INF-01, 09 and 13 updated for the new service) |
+| Infrastructure (`tests/infra/compose.test.mjs`, INF-15 to INF-21) | `npm run test:infra` | **7 passed, 0 failed** (INF-01, 04, 09 and 13 updated for the new services) |
 | Browser (`web/e2e/signed-out.e2e.mjs`) | `node e2e/signed-out.e2e.mjs` | **16 passed, 0 failed** (campaign and lead pages added to E2E-03) |
 | Type checks and build | `npm run typecheck` in `agents` and `web`, `npm run build` in `web` | Passed |
-| Full regression | root 103, agents 55, web 56 | **214 passed, 0 failed** |
+| Full regression | root 106, agents 55, web 56 | **217 passed, 0 failed** |
 
 The pipeline tests run the agent service's own database client against the real migrations (PGlite served over the Postgres protocol). Every third-party API is replaced by a recorded fake, so the tests check exactly what is sent to each provider.
 
@@ -140,6 +140,9 @@ The pipeline tests run the agent service's own database client against the real 
 | INF-16 | Shared settings | Same signing secret as n8n; n8n has the service URL and may use `crypto` | Pass |
 | INF-17 | Dockerfile | Pinned Node image, non-root user, production dependencies only, runs the source directly | Pass |
 | INF-18 | Scheduler workflow | Every minute, HMAC over `timestamp.body`, POST to `/jobs/run` with the three headers, successful runs not stored | Pass |
+| INF-19 | Workflow import job | Same n8n image and database, workflows mounted read-only, runs once, n8n waits for it to finish | Pass |
+| INF-20 | Workflows in the repository | All valid, each with a fixed unique 16-character id; active ones published | Pass |
+| INF-21 | Importer with bad and mixed files | Duplicate ids, short ids, missing name, empty nodes and non-boolean active rejected; only active workflows published; non-JSON ignored | Pass |
 
 ## Live checks on the hosted database
 
