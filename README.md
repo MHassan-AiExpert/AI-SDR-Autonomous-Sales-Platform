@@ -357,7 +357,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | ID | Feature | Tests |
 | --- | --- | --- |
 | [F01](reports/F01-infrastructure-stack/feature-report.md) | Infrastructure stack: n8n queue mode, Redis job queue, scalable workers | 14 passed |
-| [F02](reports/F02-multi-tenant-database/feature-report.md) | Multi-tenant database with row-level security and four roles | 42 passed |
+| [F02](reports/F02-multi-tenant-database/feature-report.md) | Multi-tenant database with row-level security and four roles | 43 passed |
 
 ---
 
