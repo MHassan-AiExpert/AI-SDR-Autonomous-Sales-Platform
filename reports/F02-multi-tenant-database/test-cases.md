@@ -22,7 +22,7 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 
 | ID | Test case | Expected result | Actual |
 | --- | --- | --- | --- |
-| DB-01 | Migrations apply cleanly in order | All three migrations run without error | Pass |
+| DB-01 | Migrations apply cleanly in order | Every migration runs without error | Pass |
 | DB-02 | Every public table has row-level security enabled | No table without RLS | Pass |
 | DB-03 | Every tenant table carries a mandatory `workspace_id` | All 18 tenant tables have a non-null `workspace_id` | Pass |
 | DB-04 | Every table has at least one policy | No table without a policy | Pass |

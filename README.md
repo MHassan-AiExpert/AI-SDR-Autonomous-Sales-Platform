@@ -218,7 +218,7 @@ Every module, with its numbered functional requirements, is defined in the [Soft
 | Layer | Technology |
 | --- | --- |
 | Orchestration | n8n (self-hosted) |
-| Web app | Next.js, Supabase Auth |
+| Web app | Next.js 16 (App Router, Server Actions), React 19, TypeScript, Zod, Supabase Auth |
 | Database and knowledge base | Supabase (PostgreSQL, row-level security, pgvector) |
 | LLMs | OpenAI, Anthropic, Gemini |
 | Lead data and scraping | Apollo, Clay, Apify (Google Maps and social media actors) |
@@ -320,9 +320,13 @@ AI-SDR-Autonomous-Sales-Platform/
 │   └── .env.example             Configuration template
 ├── supabase/
 │   └── migrations/              Multi-tenant schema with row-level security
+├── web/                         Next.js web app: sign-in, workspaces, team, settings
+│   ├── src/                     App Router pages, Server Actions, role and validation logic
+│   ├── tests/                   Unit tests
+│   └── e2e/                     Browser tests
 ├── tests/
 │   ├── infra/                   Stack configuration tests
-│   └── db/                      Tenant isolation, role and data-integrity tests
+│   └── db/                      Tenant isolation, role, team and data-integrity tests
 ├── reports/                     Feature report, use cases and test cases per feature
 └── .github/workflows/ci.yml     Runs every test on each push
 ```
@@ -346,6 +350,11 @@ npm run infra:up                        # n8n on http://localhost:5678
 # 3. Apply the database schema
 npx supabase start
 npx supabase db reset
+
+# 4. Run the web app
+cd web && npm install
+cp .env.example .env.local              # Supabase project URL and publishable key
+npm run dev                             # http://localhost:3000
 ```
 
 ---
@@ -358,6 +367,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | --- | --- | --- |
 | [F01](reports/F01-infrastructure-stack/feature-report.md) | Infrastructure stack: n8n queue mode, Redis job queue, scalable workers | 14 passed |
 | [F02](reports/F02-multi-tenant-database/feature-report.md) | Multi-tenant database with row-level security and four roles | 43 passed |
+| [F03](reports/F03-web-auth-workspaces/feature-report.md) | Web app: sign-in, workspaces, team roles, channel switches and kill switch | 47 passed |
 
 ---
 
