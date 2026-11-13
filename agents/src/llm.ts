@@ -144,6 +144,16 @@ export function buildClients(keys: LlmKeys, models: ModelConfig, fetchImpl?: Fet
  * answer into a checked value and throws if it does not fit, which also moves
  * on to the next provider.
  */
+/** Every model failed; `transient` when each failure was an outage, timeout or rate limit. */
+export class AllModelsFailed extends Error {
+  readonly transient: boolean;
+  constructor(message: string, transient: boolean) {
+    super(message);
+    this.name = 'AllModelsFailed';
+    this.transient = transient;
+  }
+}
+
 export async function withFailover<T>(
   clients: LlmClient[],
   task: (client: LlmClient) => Promise<unknown>,
@@ -152,14 +162,16 @@ export async function withFailover<T>(
 ): Promise<{ value: T; provider: LlmProvider }> {
   if (!clients.length) throw new Error('No language model is connected. Connect OpenAI, Anthropic or Gemini in Setup.');
   const failures: string[] = [];
+  let transient = true;
   for (const client of clients) {
     try {
       return { value: validate(await task(client)), provider: client.provider };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'unknown error';
+      if (!(err instanceof ProviderError && (err.status === null || err.status === 429 || err.status >= 500))) transient = false;
       failures.push(`${PROVIDER_NAMES[client.provider]}: ${message}`);
       log('warn', 'llm provider failed, trying next', { ...context, provider: client.provider, error: message });
     }
   }
-  throw new Error(`Every connected language model failed. ${failures.join('; ')}`);
+  throw new AllModelsFailed(`Every connected language model failed. ${failures.join('; ')}`, transient);
 }

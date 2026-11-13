@@ -12,6 +12,8 @@ import { createDeal, createNote, noteEscape, readDealStages, updateDeal, upsertC
 import type { Deps } from './jobs.ts';
 import type { Campaign, Job } from './store.ts';
 import { log } from './log.ts';
+import { notify } from './notify.ts';
+import { slackEscape } from './sources/slack.ts';
 
 export const LIMITS = { leads: 200, deals: 100, activities: 200 };
 
@@ -132,7 +134,15 @@ export async function runCrmSync(deps: Deps, job: Job, campaign: Campaign) {
       for (const x of linked) {
         const hsStage = stages.get(x.external_id);
         const ours = hsStage === map.won ? 'won' : hsStage === map.lost ? 'lost' : null;
-        if (ours && ours !== x.stage && await store.closeDealFromCrm(ws, x.record_id, ours)) stats.closed_from_crm++;
+        const closed = ours && ours !== x.stage ? await store.closeDealFromCrm(ws, x.record_id, ours) : null;
+        if (closed && ours) {
+          stats.closed_from_crm++;
+          const link = deps.appUrl ? ` <${deps.appUrl}/w/${ws}/leads/${closed.leadId}|Open lead>` : '';
+          await notify(store, ws, {
+            event: ours === 'won' ? 'deal_won' : 'deal_lost', leadId: closed.leadId, campaignId: campaign.id, dedupe: `${ours}:${closed.leadId}`,
+            slack: `${ours === 'won' ? ':tada: *Deal won*' : ':small_red_triangle_down: *Deal lost*'}: ${slackEscape(closed.name)} was marked ${ours} in HubSpot.${link}`,
+          }, fetchImpl);
+        }
       }
     }
 

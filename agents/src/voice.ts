@@ -3,7 +3,8 @@
 // recorded, and turns each call result into lead updates.
 
 import { startCall } from './sources/vapi.ts';
-import { postSlack, slackEscape } from './sources/slack.ts';
+import { slackEscape } from './sources/slack.ts';
+import { notify } from './notify.ts';
 import { ProviderError, isObject, str } from './http.ts';
 import { IcpSchema } from './plan.ts';
 import { ruleClass } from './replies.ts';
@@ -230,17 +231,12 @@ export async function handleVapiEvent(deps: { store: Store; fetchImpl?: Deps['fe
   await store.markEvent(stored, 'processed', null);
 
   if (lead && (outcome === 'interested' || outcome === 'callback')) {
-    try {
-      const channel = await store.slackChannel(ws);
-      const slackToken = (await store.connectedTools(ws)).has('slack') ? (await store.secret(ws, 'slack'))?.bot_token : undefined;
-      if (channel && slackToken) {
-        const what = meeting ? 'wants a meeting' : outcome === 'callback' ? 'asked for a call back' : 'is interested';
-        const link = deps.appUrl ? ` <${deps.appUrl}/w/${ws}/leads/${lead.id}|Open lead>` : '';
-        await postSlack(slackToken, channel, `:telephone_receiver: *Call*: ${slackEscape(lead.name)} ${what}${summary ? `: ${slackEscape(summary.slice(0, 200))}` : ''}${link}`, deps.fetchImpl);
-      }
-    } catch (err) {
-      log('warn', 'call alert failed', { workspace_id: ws, error: err instanceof Error ? err.message : 'unknown' });
-    }
+    const what = meeting ? 'wants a meeting' : outcome === 'callback' ? 'asked for a call back' : 'is interested';
+    const link = deps.appUrl ? ` <${deps.appUrl}/w/${ws}/leads/${lead.id}|Open lead>` : '';
+    await notify(store, ws, {
+      event: 'hot_call', leadId: lead.id, dedupe: `call:${ours.id}`, title: meeting ? 'Caller wants a meeting' : outcome === 'callback' ? 'Call back requested' : 'Interested caller',
+      slack: `:telephone_receiver: *Call*: ${slackEscape(lead.name)} ${what}${summary ? `: ${slackEscape(summary.slice(0, 200))}` : ''}${link}`,
+    }, deps.fetchImpl);
   }
   return { status: 'stored' };
 }

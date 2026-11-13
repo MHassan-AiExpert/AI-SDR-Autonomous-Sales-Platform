@@ -3,7 +3,8 @@ import { ActionForm, SubmitButton } from '@/components/action-form';
 import { canManageSettings } from '@/lib/roles';
 import { requireWorkspace } from '@/lib/session';
 import { CHANNELS, CHANNEL_LABELS } from '@/lib/validation';
-import { rotateWebhookToken, saveCrmSettings, syncCrmNow, updateSettings } from '../actions';
+import { rotateWebhookToken, saveCrmSettings, saveNotifySettings, syncCrmNow, updateSettings } from '../actions';
+import { EVENTS, EVENT_LABELS, hourLabel } from '@/lib/notifications';
 import { CRM_SCOPES, CRM_SCOPE_LABELS, DEAL_STAGES, DEAL_STAGE_LABELS, savedStage } from '@/lib/crm';
 import { inboundWebhookUrl } from '@/lib/texting';
 import { vapiServerUrl } from '@/lib/receptionist';
@@ -15,7 +16,7 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
   const { supabase, workspace } = await requireWorkspace(workspaceId);
   const manage = canManageSettings(workspace.role);
   const { data: extra } = await supabase.from('workspaces')
-    .select('slack_channel, crm_sync_enabled, crm_sync_scope, crm_pipeline_id, crm_stage_map, crm_synced_at').eq('id', workspace.id).maybeSingle();
+    .select('slack_channel, notify_slack_events, notify_quiet_start, notify_quiet_end, notify_timezone, bounce_pause_pct, optout_pause_pct, low_credits_threshold, crm_sync_enabled, crm_sync_scope, crm_pipeline_id, crm_stage_map, crm_synced_at').eq('id', workspace.id).maybeSingle();
   const [{ data: hub }, { data: links }] = await Promise.all([
     supabase.from('integrations').select('status').eq('workspace_id', workspace.id).eq('tool', 'hubspot').maybeSingle(),
     supabase.from('crm_links').select('record_type').eq('workspace_id', workspace.id).limit(10000),
@@ -82,6 +83,68 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
         {manage ? <SubmitButton>Save settings</SubmitButton> : null}
       </ActionForm>
 
+
+      <section className="card stack" aria-labelledby="alerts">
+        <h2 id="alerts">Notifications and alerts</h2>
+        <p className="muted">Every alert is kept in Notifications. Choose which ones also go to the Slack channel above. During quiet hours Slack alerts are held and sent when quiet hours end; critical alerts, such as emails paused for a high bounce rate, always go straight through.</p>
+        <ActionForm action={saveNotifySettings} className="stack">
+          <input type="hidden" name="workspace_id" value={workspace.id} />
+          <fieldset className="stack" disabled={!manage}>
+            <legend>Send to Slack</legend>
+            <div className="grid-2">
+              {EVENTS.map((e) => (
+                <label key={e} className="choice">
+                  <input type="checkbox" name={`event_${e}`} defaultChecked={(extra?.notify_slack_events ?? EVENTS).includes(e)} />
+                  <span>{EVENT_LABELS[e]}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <fieldset className="stack" disabled={!manage}>
+            <legend>Quiet hours</legend>
+            <div className="grid-2">
+              <label className="field">
+                <span>From</span>
+                <select name="notify_quiet_start" defaultValue={extra?.notify_quiet_start ?? ''}>
+                  <option value="">No quiet hours</option>
+                  {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{hourLabel(h)}</option>)}
+                </select>
+              </label>
+              <label className="field">
+                <span>Until</span>
+                <select name="notify_quiet_end" defaultValue={extra?.notify_quiet_end ?? ''}>
+                  <option value="">No quiet hours</option>
+                  {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{hourLabel(h)}</option>)}
+                </select>
+              </label>
+              <label className="field">
+                <span>Time zone</span>
+                <input name="notify_timezone" type="text" maxLength={64} defaultValue={extra?.notify_timezone ?? 'UTC'} placeholder="Europe/London" />
+                <small className="muted">Also sets when the daily summary goes out (8am).</small>
+              </label>
+            </div>
+          </fieldset>
+          <fieldset className="stack" disabled={!manage}>
+            <legend>Automatic safety limits</legend>
+            <p className="muted">Checked every 15 minutes over the last 7 days, once a campaign has sent at least 50 emails. Crossing a limit pauses that campaign&apos;s emails, in Instantly too, and raises a critical alert.</p>
+            <div className="grid-2">
+              <label className="field">
+                <span>Pause emails at a bounce rate of (%)</span>
+                <input name="bounce_pause_pct" type="number" min={1} max={50} step={0.5} defaultValue={extra?.bounce_pause_pct ?? 5} required />
+              </label>
+              <label className="field">
+                <span>Pause emails at an opt-out rate of (%)</span>
+                <input name="optout_pause_pct" type="number" min={1} max={50} step={0.5} defaultValue={extra?.optout_pause_pct ?? 3} required />
+              </label>
+              <label className="field">
+                <span>Warn when a tool has fewer credits than</span>
+                <input name="low_credits_threshold" type="number" min={0} step={1} defaultValue={extra?.low_credits_threshold ?? 100} required />
+              </label>
+            </div>
+          </fieldset>
+          {manage ? <SubmitButton>Save notifications</SubmitButton> : null}
+        </ActionForm>
+      </section>
 
       <section className="card stack" aria-labelledby="crm">
         <div className="spread">

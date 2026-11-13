@@ -54,6 +54,16 @@ export function createAgentServer(deps: Deps, options: ServerOptions): Server {
           return send(503, { status: 'database unavailable' });
         }
       }
+      // Readiness: the database answers and the queue is moving (SRS 10.4)
+      if (req.method === 'GET' && req.url === '/ready') {
+        try {
+          const q = await deps.store.queueHealth();
+          const ok = q.stuck === 0;
+          return send(ok ? 200 : 503, { status: ok ? 'ready' : 'queue backlog', queued: q.queued, stuck: q.stuck, oldest_minutes: q.oldestMinutes });
+        } catch {
+          return send(503, { status: 'database unavailable' });
+        }
+      }
       if (req.method === 'POST' && req.url === '/jobs/run') {
         let body: string;
         try {

@@ -170,7 +170,7 @@ export async function setOutreachStatus(_prev: FormState, form: FormData): Promi
 
   const { data, error } = await supabase
     .from('campaigns')
-    .update({ outreach_status: status, updated_at: new Date().toISOString() })
+    .update({ outreach_status: status, updated_at: new Date().toISOString(), ...(status === 'live' ? { auto_paused_reason: null, auto_paused_at: null } : {}) })
     .eq('workspace_id', ws.data)
     .eq('id', campaignId.data)
     .select('id');

@@ -6,7 +6,8 @@
 
 import { getCall } from './sources/vapi.ts';
 import { sendMessage } from './sources/twilio.ts';
-import { postSlack, slackEscape } from './sources/slack.ts';
+import { slackEscape } from './sources/slack.ts';
+import { notify, type Notice } from './notify.ts';
 import { isObject, str, type Fetch } from './http.ts';
 import { bookingLinkFor } from './booking.ts';
 import { OPT_OUT_CALL } from './voice.ts';
@@ -110,14 +111,8 @@ export function receptionOutcome(endedReason: string, structured: Record<string,
 
 const EMAIL = /^[^\s@<>()"',;:]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 
-async function alert(store: Store, ws: string, text: string, fetchImpl?: Fetch) {
-  try {
-    const channel = await store.slackChannel(ws);
-    const token = (await store.connectedTools(ws)).has('slack') ? (await store.secret(ws, 'slack'))?.bot_token : undefined;
-    if (channel && token) await postSlack(token, channel, text, fetchImpl);
-  } catch (err) {
-    log('warn', 'receptionist alert failed', { workspace_id: ws, error: err instanceof Error ? err.message : 'unknown' });
-  }
+async function alert(store: Store, ws: string, text: string, fetchImpl: Fetch | undefined, meta: Omit<Notice, 'slack'>) {
+  await notify(store, ws, { ...meta, slack: text }, fetchImpl);
 }
 
 export type ReceptionResult = { status: 'stored' | 'duplicate' | 'ignored' };
@@ -170,10 +165,12 @@ export async function handleReceptionistReport(deps: ReceptionistDeps, ws: strin
   if (outcome === 'meeting_requested') {
     const sent = structured.ok_to_text === true ? await textBookingLink(deps, ws, c, saved.leadId, saved.callId, from, callerName) : 'they did not agree to a text';
     if (sent !== 'sent') await store.addTask(ws, saved.leadId, 'manual', `Send a booking link: ${sent}`);
-    await alert(store, ws, `:telephone_receiver: *Inbound call*: ${who} wants a meeting${reason}. ${sent === 'sent' ? 'Booking link sent by text.' : `Send them a booking link (${sent}).`}${link}`, deps.fetchImpl);
+    await alert(store, ws, `:telephone_receiver: *Inbound call*: ${who} wants a meeting${reason}. ${sent === 'sent' ? 'Booking link sent by text.' : `Send them a booking link (${sent}).`}${link}`, deps.fetchImpl,
+      { event: sent === 'sent' ? 'hot_call' : 'handoff', severity: sent === 'sent' ? 'info' : 'warning', title: 'Inbound caller wants a meeting', leadId: saved.leadId, dedupe: `inbound:${saved.callId}` });
   } else if (outcome === 'callback_requested' || outcome === 'existing_customer' || outcome === 'transferred') {
     const what = outcome === 'callback_requested' ? 'asked to be called back' : outcome === 'transferred' ? 'was put through to the team' : 'is an existing customer';
-    await alert(store, ws, `:telephone_receiver: *Inbound call*: ${who} ${what}${reason}.${link}`, deps.fetchImpl);
+    await alert(store, ws, `:telephone_receiver: *Inbound call*: ${who} ${what}${reason}.${link}`, deps.fetchImpl,
+      { event: 'handoff', severity: outcome === 'callback_requested' ? 'warning' : 'info', title: outcome === 'callback_requested' ? 'Call back requested' : outcome === 'transferred' ? 'Call put through' : 'Existing customer called', leadId: saved.leadId, dedupe: `inbound:${saved.callId}` });
   }
   return { status: 'stored' };
 }

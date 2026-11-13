@@ -1006,7 +1006,7 @@ export class Store {
   /** AI-run meetings that start within a minute or started in the last 15 minutes. */
   async closerMeetings(workspaceId: string, campaignId: string) {
     return (await this.sql`
-      select m.id, m.lead_id, m.starts_at, m.phone as meeting_phone, m.event_name, m.invitee_name, m.invitee_email,
+      select m.id, m.lead_id, m.starts_at, m.zoom_url, m.phone as meeting_phone, m.event_name, m.invitee_name, m.invitee_email,
              l.full_name, l.email, l.phone, l.phone_checked_at, l.consent, l.stage, l.ai_report, c.name as company_name,
              app.is_suppressed(l.workspace_id, l.email, coalesce(m.phone, l.phone)) as suppressed
       from meetings m
@@ -1432,6 +1432,133 @@ export class Store {
     });
   }
 
+  // ---------------------------------------------------------------- notifications
+
+  async notifySettings(workspaceId: string): Promise<import('./notify.ts').NotifySettings | null> {
+    const rows = await this.sql`
+      select notify_slack_events, notify_quiet_start, notify_quiet_end, notify_timezone, slack_channel from workspaces where id = ${workspaceId}::uuid`;
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      slack_events: (r.notify_slack_events ?? []) as string[], quiet_start: r.notify_quiet_start ?? null, quiet_end: r.notify_quiet_end ?? null,
+      timezone: String(r.notify_timezone ?? 'UTC'), slack_channel: r.slack_channel ?? null,
+    };
+  }
+
+  /** Records an alert; null when an alert with the same key already exists. */
+  async addNotification(workspaceId: string, n: {
+    event: string; severity: string; title: string; body: string; leadId: string | null; campaignId: string | null;
+    linkPath: string; actionUrl: string | null; dedupe: string | null; slackText: string;
+  }): Promise<string | null> {
+    const rows = await this.sql`
+      insert into notifications (workspace_id, event, severity, title, body, lead_id, campaign_id, link_path, action_url, dedupe_key, slack_text)
+      select ${workspaceId}::uuid, ${n.event}, ${n.severity}, ${n.title}, ${n.body}, l.id, c.id, ${n.linkPath}, ${n.actionUrl}, ${n.dedupe}, ${n.slackText}
+      from (select 1) x
+      left join leads l on l.workspace_id = ${workspaceId}::uuid and l.id = ${n.leadId}::uuid
+      left join campaigns c on c.workspace_id = ${workspaceId}::uuid and c.id = ${n.campaignId}::uuid
+      on conflict (workspace_id, dedupe_key) do nothing
+      returning id`;
+    return (rows[0]?.id ?? null) as string | null;
+  }
+
+  async setNotificationSlack(id: string, status: 'not_connected' | 'held' | 'sent' | 'failed', error: string | null) {
+    await this.sql`update notifications set slack_status = ${status}, slack_error = ${error ? error.slice(0, 300) : null} where id = ${id}::uuid`;
+  }
+
+  async heldNotifications(workspaceId: string, limit: number) {
+    return (await this.sql`
+      select id, slack_text from notifications where workspace_id = ${workspaceId}::uuid and slack_status = 'held'
+      order by created_at limit ${limit}`) as unknown as { id: string; slack_text: string }[];
+  }
+
+  // ---------------------------------------------------------------- monitoring
+
+  async monitoringClaim(limit: number): Promise<string[]> {
+    return (await this.sql`select id from monitoring_claim(${limit}::int)`).map((r) => r.id as string);
+  }
+
+  async monitorSettings(workspaceId: string) {
+    const rows = await this.sql`
+      select name, bounce_pause_pct::float8 as bounce_pct, optout_pause_pct::float8 as optout_pct, low_credits_threshold::float8 as low_credits
+      from workspaces where id = ${workspaceId}::uuid`;
+    return (rows[0] ?? null) as { name: string; bounce_pct: number; optout_pct: number; low_credits: number } | null;
+  }
+
+  /** Emails sent, bounced and opted out over the last 7 days, per campaign whose emails are live. */
+  async deliveryRates(workspaceId: string) {
+    return (await this.sql`
+      select c.id, c.name,
+        count(e.id)::int as sent,
+        count(e.id) filter (where e.status = 'bounced')::int as bounced,
+        (select count(distinct r.lead_id)::int from replies r join leads l on l.workspace_id = r.workspace_id and l.id = r.lead_id
+          where r.workspace_id = c.workspace_id and l.campaign_id = c.id and r.classification = 'unsubscribe' and r.created_at > now() - interval '7 days') as opted_out
+      from campaigns c
+      left join emails e on e.workspace_id = c.workspace_id and e.campaign_id = c.id and e.status in ('sent', 'bounced') and e.sent_at > now() - interval '7 days'
+      where c.workspace_id = ${workspaceId}::uuid and c.outreach_status = 'live'
+      group by c.id`) as unknown as { id: string; name: string; sent: number; bounced: number; opted_out: number }[];
+  }
+
+  /** Stops a campaign's emails; false when they were already stopped. */
+  async autoPauseEmails(workspaceId: string, campaignId: string, reason: string): Promise<boolean> {
+    return this.sql.begin(async (tx) => {
+      const rows = await tx`
+        update campaigns set outreach_status = 'paused', auto_paused_reason = ${reason.slice(0, 300)}, auto_paused_at = now(), updated_at = now()
+        where workspace_id = ${workspaceId}::uuid and id = ${campaignId}::uuid and outreach_status = 'live'
+        returning id`;
+      if (!rows.length) return false;
+      // The outreach agent pauses the campaign in Instantly
+      await tx`insert into agent_jobs (workspace_id, campaign_id, type) values (${workspaceId}::uuid, ${campaignId}::uuid, 'email_outreach') on conflict do nothing`;
+      return true;
+    });
+  }
+
+  async integrationProblems(workspaceId: string) {
+    return (await this.sql`
+      select tool, status, last_error, credits_remaining::float8 as credits from integrations
+      where workspace_id = ${workspaceId}::uuid and status in ('connected', 'error', 'expired')`) as unknown as
+      { tool: string; status: string; last_error: string | null; credits: number | null }[];
+  }
+
+  /** Tasks waiting more than 15 minutes that nothing is holding back. */
+  async stuckJobs(workspaceId: string) {
+    const rows = await this.sql`
+      select count(*)::int as n, min(j.created_at) as oldest from agent_jobs j join workspaces w on w.id = j.workspace_id
+      where j.workspace_id = ${workspaceId}::uuid and j.status = 'queued' and coalesce(j.run_after, j.created_at) < now() - interval '15 minutes'
+        and not (w.outreach_paused and j.type in ('lead_sourcing', 'copywriting', 'reply_send', 'voice_outreach', 'sms_outreach', 'ai_closer'))`;
+    return { n: Number(rows[0]?.n ?? 0), oldest: rows[0]?.oldest ? new Date(rows[0].oldest as string) : null };
+  }
+
+  /** Yesterday's activity for the daily summary (a 24-hour window ending now). */
+  async dailyActivity(workspaceId: string) {
+    const rows = await this.sql`
+      select
+        (select count(*)::int from leads where workspace_id = ${workspaceId}::uuid and created_at > now() - interval '1 day') as leads,
+        (select count(*)::int from emails where workspace_id = ${workspaceId}::uuid and status in ('sent', 'bounced') and sent_at > now() - interval '1 day') as emails,
+        (select count(*)::int from replies where workspace_id = ${workspaceId}::uuid and created_at > now() - interval '1 day' and coalesce(classification, '') <> 'out_of_office') as replies,
+        (select count(*)::int from replies where workspace_id = ${workspaceId}::uuid and created_at > now() - interval '1 day' and classification in ('interested', 'question', 'referral')) as positive,
+        (select count(*)::int from calls where workspace_id = ${workspaceId}::uuid and created_at > now() - interval '1 day') as calls,
+        (select count(*)::int from meetings where workspace_id = ${workspaceId}::uuid and created_at > now() - interval '1 day') as meetings,
+        (select count(*)::int from deals where workspace_id = ${workspaceId}::uuid and stage = 'won' and closed_at > now() - interval '1 day') as won,
+        (select count(*)::int from agent_jobs where workspace_id = ${workspaceId}::uuid and status = 'failed' and finished_at > now() - interval '1 day') as failed`;
+    return rows[0] as unknown as { leads: number; emails: number; replies: number; positive: number; calls: number; meetings: number; won: number; failed: number };
+  }
+
+  /** Platform-wide queue depth for the readiness check; counts only. */
+  async queueHealth() {
+    const rows = await this.sql`
+      select count(*)::int as queued,
+        count(*) filter (where coalesce(j.run_after, j.created_at) < now() - interval '15 minutes'
+                           and not (w.outreach_paused and j.type in ('lead_sourcing', 'copywriting', 'reply_send', 'voice_outreach', 'sms_outreach', 'ai_closer')))::int as stuck,
+        coalesce(extract(epoch from now() - min(coalesce(j.run_after, j.created_at))) / 60, 0)::int as oldest
+      from agent_jobs j join workspaces w on w.id = j.workspace_id where j.status = 'queued'`;
+    return { queued: Number(rows[0].queued), stuck: Number(rows[0].stuck), oldestMinutes: Math.max(0, Number(rows[0].oldest)) };
+  }
+
+  async retryJob(id: string, error: string, delayMinutes: number): Promise<boolean> {
+    const rows = await this.sql`select agent_job_retry(${id}::uuid, ${error}, ${delayMinutes}::int) as ok`;
+    return rows[0]?.ok === true;
+  }
+
   // ---------------------------------------------------------------- CRM sync
 
   async crmSettings(workspaceId: string) {
@@ -1503,20 +1630,21 @@ export class Store {
   }
 
   /** A win or loss recorded in the CRM. Deals already closed here are left alone. */
-  async closeDealFromCrm(workspaceId: string, dealId: string, stage: 'won' | 'lost'): Promise<boolean> {
+  async closeDealFromCrm(workspaceId: string, dealId: string, stage: 'won' | 'lost'): Promise<{ leadId: string; name: string } | null> {
     return this.sql.begin(async (tx) => {
       const rows = await tx`
         update deals set stage = ${stage}, closed_at = coalesce(closed_at, now()), closed_by = coalesce(closed_by, 'human'), updated_at = now()
         where workspace_id = ${workspaceId}::uuid and id = ${dealId}::uuid and stage not in ('won', 'lost')
         returning lead_id`;
-      if (!rows.length) return false;
+      if (!rows.length) return null;
       const leadId = rows[0].lead_id as string;
       await tx`update leads set stage = ${stage}, stage_changed_at = now(), updated_at = now()
                where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid and stage <> ${stage} and stage <> 'do_not_contact'`;
       await tx`
         insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
         values (${workspaceId}::uuid, ${leadId}::uuid, 'status_change', null, ${stage === 'won' ? 'Marked won in HubSpot' : 'Marked lost in HubSpot'}, 'system', 'deals', ${dealId}::uuid)`;
-      return true;
+      const name = (await tx`select coalesce(full_name, email, phone, 'A lead') as name from leads where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid`)[0]?.name;
+      return { leadId, name: String(name ?? 'A lead') };
     });
   }
 

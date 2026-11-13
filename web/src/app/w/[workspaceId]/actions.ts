@@ -9,6 +9,7 @@ import { parsePlaybook } from '@/lib/closer';
 import { DECISIONS, DECISION_NOTICES, type Decision } from '@/lib/learning';
 import { spendSchema } from '@/lib/analytics';
 import { parseCrmForm } from '@/lib/crm';
+import { parseNotifyForm } from '@/lib/notifications';
 
 const NO_PERMISSION = 'You do not have permission to do that.';
 
@@ -303,4 +304,34 @@ export async function syncCrmNow(_prev: FormState, form: FormData): Promise<Form
   }
   revalidatePath(`/w/${workspaceId}/settings`);
   return { notice: queued ? 'HubSpot will be brought up to date within a minute.' : 'A sync is already waiting to run.' };
+}
+
+export async function saveNotifySettings(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  if (!workspaceId) return { error: 'Workspace not found.' };
+  const parsed = parseNotifyForm(form);
+  if (!parsed.success) return { error: firstError(parsed.error) };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('workspaces').update(parsed.data).eq('id', workspaceId).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${workspaceId}/settings`);
+  return { notice: 'Notification and alert settings saved.' };
+}
+
+export async function acceptHandoff(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  const id = uuidSchema.safeParse(form.get('notification_id'));
+  if (!workspaceId || !id.success) return { error: 'Notification not found.' };
+  const { supabase, user } = await requireUser();
+  const { data, error } = await supabase.from('notifications')
+    .update({ accepted_by: user.id, accepted_at: new Date().toISOString() })
+    .eq('workspace_id', workspaceId).eq('id', id.data).eq('event', 'handoff').is('accepted_at', null)
+    .select('lead_id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: 'Someone has already taken this, or you cannot take handoffs.' };
+  // The lead is assigned to the person who took it
+  if (data[0].lead_id) await supabase.from('leads').update({ owner_id: user.id }).eq('workspace_id', workspaceId).eq('id', data[0].lead_id);
+  revalidatePath(`/w/${workspaceId}/notifications`);
+  return { notice: 'It is yours. The lead is now assigned to you.' };
 }

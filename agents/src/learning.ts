@@ -7,7 +7,8 @@
 
 import { z } from 'zod';
 import { buildClients, withFailover, type LlmKeys } from './llm.ts';
-import { postSlack, slackEscape } from './sources/slack.ts';
+import { slackEscape } from './sources/slack.ts';
+import { notify } from './notify.ts';
 import type { Deps } from './jobs.ts';
 import type { Campaign, Job, Store } from './store.ts';
 import { log } from './log.ts';
@@ -237,21 +238,13 @@ export async function runLearning(deps: Deps, job: Job, campaign: Campaign) {
   });
 
   if (rows.length) {
-    try {
-      const channel = await store.slackChannel(ws);
-      const token = (await store.connectedTools(ws)).has('slack') ? (await store.secret(ws, 'slack'))?.bot_token : undefined;
-      if (channel && token) {
-        const waiting = saved.created - saved.applied;
-        const lines = [
-          `:brain: *Weekly learning* (${slackEscape(campaign.name)})`, slackEscape(summary),
-          saved.applied ? `${saved.applied} new ${saved.applied === 1 ? 'lesson was' : 'lessons were'} applied to the copywriter.` : '',
-          waiting ? `${waiting} ${waiting === 1 ? 'suggestion is' : 'suggestions are'} waiting for you${deps.appUrl ? `: <${deps.appUrl}/w/${ws}/learning|Review>` : '.'}` : '',
-        ].filter(Boolean);
-        await postSlack(token, channel, lines.join('\n'), deps.fetchImpl);
-      }
-    } catch (err) {
-      log('warn', 'learning alert failed', { job: job.id, error: err instanceof Error ? err.message : 'unknown' });
-    }
+    const waiting = saved.created - saved.applied;
+    const lines = [
+      `:brain: *Weekly learning* (${slackEscape(campaign.name)})`, slackEscape(summary),
+      saved.applied ? `${saved.applied} new ${saved.applied === 1 ? 'lesson was' : 'lessons were'} applied to the copywriter.` : '',
+      waiting ? `${waiting} ${waiting === 1 ? 'suggestion is' : 'suggestions are'} waiting for you${deps.appUrl ? `: <${deps.appUrl}/w/${ws}/learning|Review>` : '.'}` : '',
+    ].filter(Boolean);
+    await notify(store, ws, { event: 'weekly_learning', campaignId: campaign.id, path: '/learning', title: `Weekly learning: ${campaign.name.slice(0, 80)}`, slack: lines.join('\n'), dedupe: `learning:${saved.reportId}` }, deps.fetchImpl);
   }
   return { leads: rows.length, findings: fs.length, suggestions: saved.created, applied: saved.applied, summary_by_ai: byAi };
 }

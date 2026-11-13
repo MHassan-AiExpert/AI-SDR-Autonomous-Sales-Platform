@@ -49,7 +49,7 @@ await check('E2E-02', 'Workspace list redirects signed-out visitors to sign-in',
 });
 
 await check('E2E-03', 'Workspace pages redirect signed-out visitors and remember the destination', async () => {
-  for (const path of [`/w/${WS}`, `/w/${WS}/setup`, `/w/${WS}/members`, `/w/${WS}/settings`, `/w/${WS}/campaigns`, `/w/${WS}/campaigns/new`, `/w/${WS}/campaigns/${WS}`, `/w/${WS}/leads?source=apollo`, `/w/${WS}/leads/${WS}`, `/w/${WS}/campaigns/${WS}/emails`, `/w/${WS}/inbox`, `/w/${WS}/meetings`, `/w/${WS}/calls`, `/w/${WS}/texts`, `/w/${WS}/deals`, `/w/${WS}/playbook`, `/w/${WS}/learning`, `/w/${WS}/analytics`, `/w/${WS}/analytics/export`]) {
+  for (const path of [`/w/${WS}`, `/w/${WS}/setup`, `/w/${WS}/members`, `/w/${WS}/settings`, `/w/${WS}/campaigns`, `/w/${WS}/campaigns/new`, `/w/${WS}/campaigns/${WS}`, `/w/${WS}/leads?source=apollo`, `/w/${WS}/leads/${WS}`, `/w/${WS}/campaigns/${WS}/emails`, `/w/${WS}/inbox`, `/w/${WS}/meetings`, `/w/${WS}/calls`, `/w/${WS}/texts`, `/w/${WS}/deals`, `/w/${WS}/playbook`, `/w/${WS}/learning`, `/w/${WS}/analytics`, `/w/${WS}/analytics/export`, `/w/${WS}/notifications`, `/w/${WS}/notifications?view=handoffs`]) {
     await page.goto(`${BASE}${path}`);
     assert.equal(new URL(page.url()).pathname, '/login');
     assert.equal(await page.locator('input[name=next]').inputValue(), path);

@@ -4,7 +4,7 @@ import { DAY_LABELS, OUTREACH_STATUS_LABELS, SEND_TIMEZONES, TIMEZONE_LABELS, ou
 import { queueAgentJob, saveEmailSettings, setOutreachStatus } from '../actions';
 
 export type OutreachCampaign = {
-  id: string; status: string; outreach_status: string; sender_name: string | null; email_footer: string | null;
+  id: string; status: string; outreach_status: string; auto_paused_reason?: string | null; auto_paused_at?: string | null; sender_name: string | null; email_footer: string | null;
   sending_accounts: unknown; send_timezone: string; send_window_start: string; send_window_end: string;
   send_days: Record<string, boolean>; daily_send_limit: number; follow_up_count: number; follow_up_delay_days: number;
   instantly_campaign_id: string | null; instantly_state: string | null;
@@ -38,6 +38,9 @@ export function OutreachSection({
         </span>
       </div>
       <p className="muted">The copywriting agent writes a personal sequence for every qualified lead with a verified email. Approved sequences are sent through your Instantly mailboxes, within your daily limit and sending hours, and stop as soon as the lead replies.</p>
+      {campaign.outreach_status === 'paused' && campaign.auto_paused_reason ? (
+        <p role="status"><span className="badge badge-error">Paused automatically</span> {campaign.auto_paused_reason}{campaign.auto_paused_at ? ` (${new Date(campaign.auto_paused_at).toUTCString().slice(5, 22)} UTC)` : ''}. Check the lead list and mailboxes before resuming.</p>
+      ) : null}
       <dl className="stats">
         <div><dt>Waiting for approval</dt><dd>{counts.draft}</dd></div>
         <div><dt>Approved, not sent yet</dt><dd>{counts.approved}</dd></div>

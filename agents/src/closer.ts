@@ -8,7 +8,8 @@ import { z } from 'zod';
 import { startCall } from './sources/vapi.ts';
 import { createPaymentLink, createWebhookEndpoint, verifyStripeSignature } from './sources/stripe.ts';
 import { sendProposal } from './sources/pandadoc.ts';
-import { postSlack, slackEscape } from './sources/slack.ts';
+import { slackEscape } from './sources/slack.ts';
+import { notify, type Notice } from './notify.ts';
 import { ProviderError, isObject, str, type Fetch } from './http.ts';
 import { OPT_OUT_CALL } from './voice.ts';
 import { ruleClass } from './replies.ts';
@@ -59,6 +60,7 @@ export function matchPlan(playbook: Playbook, name: unknown): Plan | null {
 // ---------------------------------------------------------------- the meeting call
 
 export type CloserMeeting = {
+  zoom_url?: string | null;
   id: string; lead_id: string; starts_at: string | Date; meeting_phone: string | null; event_name: string | null;
   invitee_name: string | null; invitee_email: string | null; full_name: string | null; email: string | null; phone: string | null;
   phone_checked_at: string | Date | null; consent: Record<string, unknown> | null; stage: string; ai_report: Record<string, unknown> | null;
@@ -161,14 +163,8 @@ export function proposalTokens(d: DealToClose, plan: Plan, company: string, paym
 const MAX_CLOSE_ATTEMPTS = 3;
 const STALE_MS = 10 * 60_000;
 
-async function alert(store: Store, ws: string, text: string, fetchImpl?: Fetch) {
-  try {
-    const channel = await store.slackChannel(ws);
-    const token = (await store.connectedTools(ws)).has('slack') ? (await store.secret(ws, 'slack'))?.bot_token : undefined;
-    if (channel && token) await postSlack(token, channel, text, fetchImpl);
-  } catch (err) {
-    log('warn', 'closer alert failed', { workspace_id: ws, error: err instanceof Error ? err.message : 'unknown' });
-  }
+async function alert(store: Store, ws: string, text: string, fetchImpl: Fetch | undefined, meta: Omit<Notice, 'slack'>) {
+  await notify(store, ws, { ...meta, slack: text }, fetchImpl);
 }
 
 export async function runCloser(deps: Deps, job: Job, campaign: Campaign) {
@@ -203,7 +199,8 @@ export async function runCloser(deps: Deps, job: Job, campaign: Campaign) {
         await store.handOffMeeting(ws, m.id, m.lead_id, reason);
         stats.handed_off++;
         stats.reasons[reason] = (stats.reasons[reason] ?? 0) + 1;
-        await alert(store, ws, `:handshake: *Meeting for your team*: ${slackEscape(m.full_name ?? m.invitee_name ?? m.email ?? 'A prospect')} at ${new Date(m.starts_at).toUTCString().replace(':00 GMT', ' UTC')}. ${slackEscape(reason)}.${link(m.lead_id)}`, deps.fetchImpl);
+        await alert(store, ws, `:handshake: *Meeting for your team*: ${slackEscape(m.full_name ?? m.invitee_name ?? m.email ?? 'A prospect')} at ${new Date(m.starts_at).toUTCString().replace(':00 GMT', ' UTC')}. ${slackEscape(reason)}.${link(m.lead_id)}`, deps.fetchImpl,
+          { event: 'handoff', severity: 'warning', title: 'Meeting for your team', leadId: m.lead_id, campaignId: campaign.id, actionUrl: m.zoom_url, dedupe: `handoff:meeting:${m.id}` });
         continue;
       }
       if (!number.ok || !playbook) continue;
@@ -224,7 +221,8 @@ export async function runCloser(deps: Deps, job: Job, campaign: Campaign) {
         await store.callFailed(ws, callId, message.slice(0, 300));
         await store.handOffMeeting(ws, m.id, m.lead_id, `The closer call could not start: ${message}`, 'failed');
         stats.failed++;
-        await alert(store, ws, `:warning: *Meeting for your team*: the AI closer could not call ${slackEscape(m.full_name ?? m.email ?? 'the prospect')}. ${slackEscape(message)}.${link(m.lead_id)}`, deps.fetchImpl);
+        await alert(store, ws, `:warning: *Meeting for your team*: the AI closer could not call ${slackEscape(m.full_name ?? m.email ?? 'the prospect')}. ${slackEscape(message)}.${link(m.lead_id)}`, deps.fetchImpl,
+          { event: 'handoff', severity: 'warning', title: 'Meeting for your team', leadId: m.lead_id, campaignId: campaign.id, actionUrl: m.zoom_url, dedupe: `handoff:meeting:${m.id}` });
         if (err instanceof ProviderError && (err.status === 401 || err.status === 402 || err.status === 403)) await store.markToolError(ws, 'vapi', 'error', message);
       }
     }
@@ -269,13 +267,15 @@ export async function runCloser(deps: Deps, job: Job, campaign: Campaign) {
         }, deps.fetchImpl, deps.pandadocPauseMs);
         await store.dealClosed(ws, d.id, d.lead_id, { status: 'sent', error: null, documentId, activity: `Proposal for ${plan.name} sent for e-signature${paymentUrl ? ' with the payment link' : ''}` });
         stats.proposals_sent++;
-        await alert(store, ws, `:page_facing_up: *Proposal sent*: ${slackEscape(d.full_name ?? d.email)} for ${slackEscape(plan.name)} (${money(plan.price_cents, plan.currency)}${per(plan.interval)}).${link(d.lead_id)}`, deps.fetchImpl);
+        await alert(store, ws, `:page_facing_up: *Proposal sent*: ${slackEscape(d.full_name ?? d.email)} for ${slackEscape(plan.name)} (${money(plan.price_cents, plan.currency)}${per(plan.interval)}).${link(d.lead_id)}`, deps.fetchImpl,
+          { event: 'proposal', title: 'Proposal sent', leadId: d.lead_id, campaignId: campaign.id, dedupe: `proposal:${d.id}` });
       } else {
         // Without PandaDoc the team sends it; the payment link is ready when Stripe is connected
         const why = !pdKey ? 'PandaDoc is not connected' : !playbook?.proposal_template_id ? 'the playbook has no proposal template' : 'the prospect has no email address';
         await store.dealClosed(ws, d.id, d.lead_id, { status: 'needs_team', error: `Send the proposal yourself: ${why}`, activity: `Agreed to ${plan.name}. Send the proposal${paymentUrl ? ' and the payment link' : ''} (${why})` });
         stats.needs_team++;
-        await alert(store, ws, `:moneybag: *Agreed*: ${slackEscape(d.full_name ?? d.email ?? 'A prospect')} wants ${slackEscape(plan.name)}. Send the proposal${paymentUrl ? `; payment link: ${paymentUrl}` : ''}.${link(d.lead_id)}`, deps.fetchImpl);
+        await alert(store, ws, `:moneybag: *Agreed*: ${slackEscape(d.full_name ?? d.email ?? 'A prospect')} wants ${slackEscape(plan.name)}. Send the proposal${paymentUrl ? `; payment link: ${paymentUrl}` : ''}.${link(d.lead_id)}`, deps.fetchImpl,
+          { event: 'handoff', severity: 'warning', title: 'Send the proposal', leadId: d.lead_id, campaignId: campaign.id, dedupe: `proposal-team:${d.id}` });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Closing failed';
@@ -331,7 +331,15 @@ export async function handleCloserResult(deps: { store: Store; fetchImpl?: Fetch
     no_answer: `:telephone_receiver: *AI closer*: ${who} did not answer for the meeting. Reschedule it.`,
     voicemail: `:telephone_receiver: *AI closer*: ${who} did not answer for the meeting. Reschedule it.`,
   };
-  if (texts[outcome]) await alert(store, ws, `${texts[outcome]}${link}`, deps.fetchImpl);
+  const events: Partial<Record<CloserOutcome, Omit<Notice, 'slack'>>> = {
+    agreed: { event: 'proposal', title: 'Agreed on the call' },
+    proposal_requested: { event: 'proposal', title: 'Proposal requested' },
+    needs_human: { event: 'handoff', severity: 'warning', title: 'Closer needs your team' },
+    follow_up: { event: 'handoff', title: 'Follow-up requested' },
+    no_answer: { event: 'handoff', severity: 'warning', title: 'Meeting missed' },
+    voicemail: { event: 'handoff', severity: 'warning', title: 'Meeting missed' },
+  };
+  if (texts[outcome]) await alert(store, ws, `${texts[outcome]}${link}`, deps.fetchImpl, { ...events[outcome]!, leadId: res.leadId, dedupe: `closer:${callId}` });
 }
 
 export type StripeResult = { status: 'won' | 'duplicate' | 'ignored' | 'unknown_workspace' | 'bad_signature' };
@@ -362,6 +370,7 @@ export async function handleStripeEvent(deps: { store: Store; fetchImpl?: Fetch;
   await store.markEvent(stored, won ? 'processed' : 'ignored', won ? null : 'No open deal for this payment link');
   if (!won) return { status: 'ignored' };
   const link = deps.appUrl ? ` <${deps.appUrl}/w/${ws}/leads/${won.leadId}|Open lead>` : '';
-  await alert(store, ws, `:tada: *Deal won*: ${slackEscape(won.name)} paid${won.plan ? ` for ${slackEscape(won.plan)}` : ''}${won.value !== null ? ` (${money(won.value, won.currency)})` : ''}.${link}`, deps.fetchImpl);
+  await alert(store, ws, `:tada: *Deal won*: ${slackEscape(won.name)} paid${won.plan ? ` for ${slackEscape(won.plan)}` : ''}${won.value !== null ? ` (${money(won.value, won.currency)})` : ''}.${link}`, deps.fetchImpl,
+    { event: 'deal_won', leadId: won.leadId, dedupe: `won:${won.leadId}` });
   return { status: 'won' };
 }

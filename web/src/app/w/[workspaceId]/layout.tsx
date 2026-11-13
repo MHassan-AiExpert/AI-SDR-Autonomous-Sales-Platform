@@ -11,8 +11,12 @@ export default async function WorkspaceLayout({
   params: Promise<{ workspaceId: string }>;
 }) {
   const { workspaceId } = await params;
-  const { workspace, user } = await requireWorkspace(workspaceId);
+  const { supabase, workspace, user } = await requireWorkspace(workspaceId);
   const base = `/w/${workspace.id}`;
+  const { data: seen } = await supabase.from('notification_seen').select('seen_at').eq('workspace_id', workspace.id).eq('user_id', user.id).maybeSingle();
+  let unreadQ = supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id);
+  if (seen?.seen_at) unreadQ = unreadQ.gt('created_at', seen.seen_at);
+  const { count: unread } = await unreadQ;
 
   return (
     <div className="shell">
@@ -30,6 +34,7 @@ export default async function WorkspaceLayout({
       </header>
       <nav className="tabs" aria-label="Workspace">
         <Link href={base}>Overview</Link>
+        <Link href={`${base}/notifications`}>Notifications{unread ? <span className="nav-count" aria-label={`${unread} new`}>{unread > 99 ? '99+' : unread}</span> : null}</Link>
         <Link href={`${base}/analytics`}>Analytics</Link>
         <Link href={`${base}/campaigns`}>Campaigns</Link>
         <Link href={`${base}/leads`}>Leads</Link>

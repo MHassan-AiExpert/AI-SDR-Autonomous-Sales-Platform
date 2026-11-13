@@ -5,7 +5,8 @@ import { randomBytes } from 'node:crypto';
 import type { Fetch } from './http.ts';
 import { isObject, str } from './http.ts';
 import { createBookingLink, createWebhook, getMe, pickEventType, trackedLink, verifyCalendlySignature } from './sources/calendly.ts';
-import { postSlack, slackEscape } from './sources/slack.ts';
+import { slackEscape } from './sources/slack.ts';
+import { notify } from './notify.ts';
 import type { Store } from './store.ts';
 import { log } from './log.ts';
 
@@ -99,16 +100,13 @@ export async function handleCalendlyEvent(deps: BookingDeps, token: unknown, raw
   await store.markEvent(stored, 'processed', null);
 
   // Tell the team; a Slack problem never loses the booking
-  try {
-    const channel = await store.slackChannel(ws);
-    const slackToken = (await store.connectedTools(ws)).has('slack') ? (await store.secret(ws, 'slack'))?.bot_token : undefined;
-    if (channel && slackToken && meetingId) {
-      const when = new Date(start).toUTCString().replace(':00 GMT', ' UTC');
-      const link = deps.appUrl ? ` <${deps.appUrl}/w/${ws}/leads/${lead.id}|Open lead>` : '';
-      await postSlack(slackToken, channel, `:calendar: *Meeting booked*: ${slackEscape(lead.full_name ?? lead.email)}${lead.company_name ? ` (${slackEscape(lead.company_name)})` : ''}, ${when}${link}`, deps.fetchImpl);
-    }
-  } catch (err) {
-    log('warn', 'meeting alert failed', { workspace_id: ws, error: err instanceof Error ? err.message : 'unknown' });
+  if (meetingId) {
+    const when = new Date(start).toUTCString().replace(':00 GMT', ' UTC');
+    const link = deps.appUrl ? ` <${deps.appUrl}/w/${ws}/leads/${lead.id}|Open lead>` : '';
+    await notify(store, ws, {
+      event: 'meeting_booked', leadId: lead.id, dedupe: `meeting:${meetingId}`,
+      slack: `:calendar: *Meeting booked*: ${slackEscape(lead.full_name ?? lead.email)}${lead.company_name ? ` (${slackEscape(lead.company_name)})` : ''}, ${when}${link}`,
+    }, deps.fetchImpl);
   }
   return { status: 'booked' };
 }

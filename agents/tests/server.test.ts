@@ -7,7 +7,11 @@ import type { Store } from '../src/store.ts';
 const SECRET = 'x'.repeat(40);
 let claimed = 0;
 let dbUp = true;
-const store = { claimJobs: async () => { claimed++; await new Promise((r) => setTimeout(r, 50)); return []; } } as unknown as Store;
+let queue: { queued: number; stuck: number; oldestMinutes: number } | null = { queued: 2, stuck: 0, oldestMinutes: 1 };
+const store = {
+  claimJobs: async () => { claimed++; await new Promise((r) => setTimeout(r, 50)); return []; },
+  queueHealth: async () => { if (!queue) throw new Error('down'); return queue; },
+} as unknown as Store;
 const server = createAgentServer({ store, models: { openai: 'o', anthropic: null, gemini: 'g' } } as Deps, {
   hmacSecret: SECRET, jobsPerRun: 3, healthCheck: async () => { if (!dbUp) throw new Error('down'); },
 });
@@ -63,6 +67,19 @@ describe('agent service HTTP', () => {
     dbUp = true;
     expect(down.status).toBe(503);
     expect((await fetch(`${base}/admin`)).status).toBe(404);
+  });
+
+  test('SRV-07 readiness reports the queue and fails on a backlog or a database outage', async () => {
+    const ok = await fetch(`${base}/ready`);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ status: 'ready', queued: 2, stuck: 0, oldest_minutes: 1 });
+    queue = { queued: 9, stuck: 4, oldestMinutes: 31 };
+    const backlog = await fetch(`${base}/ready`);
+    expect(backlog.status).toBe(503);
+    expect(await backlog.json()).toEqual({ status: 'queue backlog', queued: 9, stuck: 4, oldest_minutes: 31 });
+    queue = null;
+    expect((await fetch(`${base}/ready`)).status).toBe(503);
+    queue = { queued: 0, stuck: 0, oldestMinutes: 0 };
   });
 
   test('SRV-06 oversized bodies are rejected', async () => {

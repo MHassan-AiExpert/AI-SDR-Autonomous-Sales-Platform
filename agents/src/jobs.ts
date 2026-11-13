@@ -1,6 +1,6 @@
 // Runs agent jobs: planning a campaign and sourcing leads for it.
 
-import { buildClients, withFailover, type LlmKeys, type ModelConfig } from './llm.ts';
+import { AllModelsFailed, buildClients, withFailover, type LlmKeys, type ModelConfig } from './llm.ts';
 import { ProviderError, type Fetch } from './http.ts';
 import { CAMPAIGN_PLAN_JSON_SCHEMA, PLAN_SYSTEM, SourcePlanSchema, parsePlan, planPrompt, sanitizePlan, IcpSchema, type CampaignPlan } from './plan.ts';
 import { dedupe, hasContact, isSuppressed, normalizeCandidate, type LeadCandidate, type SourceChannel, type SourceResult } from './leads.ts';
@@ -22,6 +22,8 @@ import { runCloser as close } from './closer.ts';
 import { runAudits as audit } from './audit.ts';
 import { runLearning as learn } from './learning.ts';
 import { runCrmSync as syncCrm, CrmError } from './crm.ts';
+import { runMonitoring } from './monitoring.ts';
+import { notify } from './notify.ts';
 import type { Resolver } from './sources/website.ts';
 
 export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; scheduleHours?: number; appUrl?: string; webhookBaseUrl?: string; voiceModel?: string; pandadocPauseMs?: number };
@@ -244,6 +246,30 @@ const NEXT_STAGE: Partial<Record<Job['type'], 'enrichment' | 'research' | 'copyw
   lead_sourcing: 'enrichment', enrichment: 'research', research: 'copywriting', audit_reports: 'copywriting', copywriting: 'email_outreach',
 };
 
+const TASK_NAMES: Record<Job['type'], string> = {
+  campaign_plan: 'Campaign planning', lead_sourcing: 'Lead sourcing', enrichment: 'Enrichment', research: 'Research', copywriting: 'Email writing',
+  email_outreach: 'Email sending', reply_handling: 'Reply handling', reply_send: 'Sending answers', voice_outreach: 'AI calls', sms_outreach: 'Text follow-ups',
+  ai_closer: 'AI closer', audit_reports: 'Website audits', learning: 'Weekly learning', crm_sync: 'CRM sync',
+};
+
+/** Outages, timeouts and rate limits pass; wrong settings and rejected keys do not. */
+export function isTransient(err: unknown): boolean {
+  if (err instanceof AllModelsFailed) return err.transient;
+  return err instanceof ProviderError && (err.status === null || err.status === 429 || err.status >= 500);
+}
+
+/** One alert per campaign and task a day, so a task failing every hour does not flood the channel. */
+async function alertFailure(deps: Deps, job: Job, message: string) {
+  const campaign = await deps.store.campaign(job.workspace_id, job.campaign_id).catch(() => null);
+  const name = campaign?.name.replace(/[*_~`<>&]/g, '') ?? 'a campaign';
+  const link = deps.appUrl ? ` <${deps.appUrl}/w/${job.workspace_id}/campaigns/${job.campaign_id}|Open campaign>` : '';
+  await notify(deps.store, job.workspace_id, {
+    event: 'system_alert', severity: 'warning', campaignId: job.campaign_id, path: `/campaigns/${job.campaign_id}`,
+    title: `${TASK_NAMES[job.type]} failed`, dedupe: `failed:${job.campaign_id}:${job.type}:${new Date().toISOString().slice(0, 10)}`,
+    slack: `:x: *${TASK_NAMES[job.type]} failed* (${name}): ${message.replace(/[<>&]/g, '').slice(0, 300)}${link}`,
+  }, deps.fetchImpl);
+}
+
 /** Claims and runs up to `limit` jobs. Each job's failure is recorded on that job only. */
 export async function runQueuedJobs(deps: Deps, limit: number) {
   // Daily runs for every active campaign (SRS FR-2.6); 0 switches it off
@@ -251,9 +277,11 @@ export async function runQueuedJobs(deps: Deps, limit: number) {
   if (hours > 0) {
     const queued = await deps.store.enqueueDue(hours);
     if (queued) log('info', 'scheduled daily jobs', { queued });
+    // Workspace health checks; a monitoring problem never stops the agents
+    await runMonitoring(deps).catch((err) => log('error', 'monitoring sweep failed', { error: err instanceof Error ? err.message : 'unknown' }));
   }
   const jobs = await deps.store.claimJobs(limit);
-  const outcomes: { id: string; type: string; status: 'succeeded' | 'failed' }[] = [];
+  const outcomes: { id: string; type: string; status: 'succeeded' | 'failed' | 'retrying' }[] = [];
   for (const job of jobs) {
     const started = Date.now();
     const runLog = await deps.store.runLogStart(job.workspace_id, `agent.${job.type}`, job.correlation_id);
@@ -271,10 +299,17 @@ export async function runQueuedJobs(deps: Deps, limit: number) {
       log('info', 'job succeeded', { job: job.id, type: job.type, workspace_id: job.workspace_id, correlation_id: job.correlation_id, ms: Date.now() - started });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'The job failed';
-      await deps.store.finishJob(job.id, 'failed', {}, message);
       await deps.store.runLogFinish(runLog, 'error', message);
+      // A provider outage, timeout or rate limit is retried after 2, then 4 minutes
+      if (isTransient(err) && await deps.store.retryJob(job.id, message, 2 ** job.attempts)) {
+        outcomes.push({ id: job.id, type: job.type, status: 'retrying' });
+        log('warn', 'job will be retried', { job: job.id, type: job.type, workspace_id: job.workspace_id, correlation_id: job.correlation_id, attempt: job.attempts, error: message });
+        continue;
+      }
+      await deps.store.finishJob(job.id, 'failed', {}, message);
       outcomes.push({ id: job.id, type: job.type, status: 'failed' });
       log('error', 'job failed', { job: job.id, type: job.type, workspace_id: job.workspace_id, correlation_id: job.correlation_id, error: message });
+      await alertFailure(deps, job, message);
     }
   }
   return outcomes;

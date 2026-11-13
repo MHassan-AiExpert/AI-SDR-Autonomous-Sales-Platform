@@ -7,7 +7,8 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { buildClients, withFailover, type LlmClient, type LlmKeys } from './llm.ts';
 import { fetchHomePage } from './sources/website.ts';
-import { postSlack, slackEscape } from './sources/slack.ts';
+import { slackEscape } from './sources/slack.ts';
+import { notify } from './notify.ts';
 import type { Deps } from './jobs.ts';
 import type { Campaign, Job, Store } from './store.ts';
 import { log } from './log.ts';
@@ -168,16 +169,12 @@ export async function runAudits(deps: Deps, job: Job, campaign: Campaign) {
   const opened = await store.auditsToAlert(ws, campaign.id);
   if (opened.length) {
     stats.opened = opened.length;
-    try {
-      const channel = await store.slackChannel(ws);
-      const token = (await store.connectedTools(ws)).has('slack') ? (await store.secret(ws, 'slack'))?.bot_token : undefined;
-      if (channel && token) {
-        const lines = opened.map((o) => `• ${slackEscape(o.name)} opened their website audit${o.score !== null ? ` (score ${o.score}/100)` : ''}${deps.appUrl ? ` <${deps.appUrl}/w/${ws}/leads/${o.lead_id}|Open lead>` : ''}`);
-        await postSlack(token, channel, [`:eyes: *Audit opened* (${campaign.name.replace(/[*_~`]/g, '')})`, ...lines].join('\n'), deps.fetchImpl);
-      }
-    } catch (err) {
-      log('warn', 'audit alert failed', { job: job.id, error: err instanceof Error ? err.message : 'unknown' });
-    }
+    const lines = opened.map((o) => `• ${slackEscape(o.name)} opened their website audit${o.score !== null ? ` (score ${o.score}/100)` : ''}${deps.appUrl ? ` <${deps.appUrl}/w/${ws}/leads/${o.lead_id}|Open lead>` : ''}`);
+    await notify(store, ws, {
+      event: 'audit_opened', campaignId: campaign.id, leadId: opened.length === 1 ? opened[0].lead_id : null, path: opened.length === 1 ? undefined : '/leads',
+      title: opened.length === 1 ? 'Audit opened' : `${opened.length} audits opened`,
+      slack: [`:eyes: *Audit opened* (${campaign.name.replace(/[*_~`]/g, '')})`, ...lines].join('\n'),
+    }, deps.fetchImpl);
   }
   if (!campaign.audit_enabled) return { ...stats, note: stats.opened ? undefined : 'Website audits are off for this campaign.' };
 

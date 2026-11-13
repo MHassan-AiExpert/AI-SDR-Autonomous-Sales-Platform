@@ -5,7 +5,8 @@
 
 import { z } from 'zod';
 import { buildClients, withFailover, type LlmClient, type LlmKeys } from './llm.ts';
-import { postSlack, slackEscape } from './sources/slack.ts';
+import { slackEscape } from './sources/slack.ts';
+import { notify } from './notify.ts';
 import { ProviderError } from './http.ts';
 import type { Deps } from './jobs.ts';
 import type { Campaign, Job, InboundEvent } from './store.ts';
@@ -130,17 +131,13 @@ export async function runReplyHandling(deps: Deps, job: Job, campaign: Campaign)
 
   // One Slack message per run keeps the channel readable
   if (alerts.length) {
-    const channel = await store.slackChannel(ws);
-    const token = connected.has('slack') ? (await store.secret(ws, 'slack'))?.bot_token : undefined;
-    if (channel && token) {
-      try {
-        await postSlack(token, channel, [`*${campaign.name.replace(/[*_~`]/g, '')}*: ${alerts.length === 1 ? 'a reply needs you' : `${alerts.length} replies need you`}`, ...alerts].join('\n'), deps.fetchImpl);
-        stats.alerts = alerts.length;
-      } catch (err) {
-        stats.alert_error = err instanceof Error ? err.message : 'Slack alert failed';
-        if (err instanceof ProviderError && err.status === 401) await store.markToolError(ws, 'slack', 'error', stats.alert_error);
-      }
-    }
+    const r = await notify(store, ws, {
+      event: 'hot_reply', campaignId: campaign.id, path: '/inbox',
+      title: alerts.length === 1 ? 'A reply needs you' : `${alerts.length} replies need you`,
+      slack: [`*${campaign.name.replace(/[*_~`]/g, '')}*: ${alerts.length === 1 ? 'a reply needs you' : `${alerts.length} replies need you`}`, ...alerts].join('\n'),
+    }, deps.fetchImpl);
+    if (r.status === 'sent') stats.alerts = alerts.length;
+    if (r.status === 'failed') stats.alert_error = r.error;
   }
   return JSON.parse(JSON.stringify(stats)) as typeof stats;
 

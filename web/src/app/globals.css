@@ -188,3 +188,11 @@ code.pre { display: block; padding: 10px 12px; background: var(--bg); border: 1p
 
 /* CRM stage mapping */
 .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+
+/* Notifications */
+.notify-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.notify { border-left: 4px solid var(--border); }
+.notify-warning { border-left-color: var(--warn-text); }
+.notify-critical { border-left-color: var(--danger); }
+.notify-body { white-space: pre-line; margin: 8px 0; overflow-wrap: anywhere; }
+.nav-count { display: inline-block; min-width: 1.4em; margin-left: 4px; padding: 0 5px; border-radius: 999px; background: var(--danger); color: #fff; font-size: 0.75rem; text-align: center; }
