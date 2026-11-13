@@ -11,6 +11,7 @@ import type { Deps } from './jobs.ts';
 import type { Campaign, Job, Store } from './store.ts';
 import { log } from './log.ts';
 import { handleCloserResult } from './closer.ts';
+import { assistantForCall, handleReceptionistReport } from './receptionist.ts';
 
 export class VoiceError extends Error {}
 
@@ -168,9 +169,9 @@ export function callOutcome(endedReason: string, structured: Record<string, unkn
   }
 }
 
-export type VapiResult = { status: 'stored' | 'duplicate' | 'ignored' | 'unknown_workspace' };
+export type VapiResult = { status: 'stored' | 'duplicate' | 'ignored' | 'unknown_workspace'; response?: Record<string, unknown> };
 
-export async function handleVapiEvent(deps: { store: Store; fetchImpl?: Deps['fetchImpl']; appUrl?: string }, token: unknown, event: unknown): Promise<VapiResult> {
+export async function handleVapiEvent(deps: { store: Store; fetchImpl?: Deps['fetchImpl']; appUrl?: string; webhookBaseUrl?: string; voiceModel?: string }, token: unknown, event: unknown): Promise<VapiResult> {
   const { store } = deps;
   if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token) || !isObject(event)) return { status: 'unknown_workspace' };
   const ws = await store.workspaceByToken(token);
@@ -179,10 +180,17 @@ export async function handleVapiEvent(deps: { store: Store; fetchImpl?: Deps['fe
   const type = str(msg.type);
   const call = isObject(msg.call) ? msg.call : {};
   const providerId = str(call.id);
+  // An inbound call to a receptionist number: Vapi asks which assistant should answer
+  if (type === 'assistant-request') return { status: 'stored', response: await assistantForCall(deps, ws, call) };
   if (!providerId || (type !== 'end-of-call-report' && type !== 'status-update')) return { status: 'ignored' };
   const ours = await store.callByProviderId(ws, providerId);
-  // Only calls this platform started are accepted
-  if (!ours) return { status: 'ignored' };
+  // Calls this platform started are matched by id; inbound calls are confirmed with Vapi
+  if (!ours) {
+    if (type === 'end-of-call-report' && call.type === 'inboundPhoneCall') return handleReceptionistReport(deps, ws, call);
+    return { status: 'ignored' };
+  }
+  // Inbound calls are recorded from Vapi's own copy when they end; a repeat report changes nothing
+  if (ours.agent === 'receptionist') return { status: 'duplicate' };
 
   if (type === 'status-update') {
     const s = str(msg.status);

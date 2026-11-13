@@ -16,6 +16,7 @@ export const CONSENT_LABELS: Record<ConsentBasis, string> = {
 export const OUTCOME_LABELS: Record<string, string> = {
   booked: 'Meeting booked', interested: 'Interested', callback: 'Call back', not_interested: 'Not interested',
   wrong_number: 'Wrong number', do_not_call: 'Do not call', voicemail: 'Voicemail', no_answer: 'No answer', failed: 'Failed',
+  answered: 'Answered', transferred: 'Put through to the team', spam: 'Spam',
 };
 
 const time = z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/, 'Use a time like 10:00');

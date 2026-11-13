@@ -106,9 +106,10 @@ export function createAgentServer(deps: Deps, options: ServerOptions): Server {
         } catch {
           return send(400, { error: 'Invalid JSON' });
         }
-        const result = await handleVapiEvent({ store: deps.store, fetchImpl: deps.fetchImpl, appUrl: deps.appUrl }, parsed.token, parsed.event);
+        const result = await handleVapiEvent({ store: deps.store, fetchImpl: deps.fetchImpl, appUrl: deps.appUrl, webhookBaseUrl: deps.webhookBaseUrl, voiceModel: deps.voiceModel }, parsed.token, parsed.event);
         if (result.status === 'unknown_workspace') return send(404, { error: 'Not found' });
-        return send(200, { status: result.status });
+        // Vapi's assistant-request expects the assistant in the response body
+        return send(200, result.response ?? { status: result.status });
       }
       if (req.method === 'POST' && req.url === '/webhooks/twilio') {
         let body: string;

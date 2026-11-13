@@ -5,6 +5,7 @@ import { requireWorkspace } from '@/lib/session';
 import { CHANNELS, CHANNEL_LABELS } from '@/lib/validation';
 import { rotateWebhookToken, updateSettings } from '../actions';
 import { inboundWebhookUrl } from '@/lib/texting';
+import { vapiServerUrl } from '@/lib/receptionist';
 
 export const metadata: Metadata = { title: 'Settings' };
 
@@ -18,6 +19,7 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
   const hookBase = (process.env.NEXT_PUBLIC_WEBHOOK_BASE_URL ?? '').replace(/\/$/, '');
   const hookUrl = hook?.webhook_token && hookBase ? `${hookBase}/webhook/instantly/${hook.webhook_token}` : null;
   const twilioUrl = inboundWebhookUrl(hookBase, hook?.webhook_token ?? null);
+  const vapiUrl = vapiServerUrl(hookBase, hook?.webhook_token ?? null);
 
   return (
     <>
@@ -81,6 +83,9 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
           <h3>Twilio texts</h3>
           <p className="muted">So text replies and STOP requests reach the reply agent, open each sending number (or Messaging Service) in Twilio and set &ldquo;A message comes in&rdquo; to this address, method HTTP POST. Delivery updates use it automatically.</p>
           {twilioUrl ? <code className="pre">{twilioUrl}</code> : null}
+          <h3>Vapi receptionist number</h3>
+          <p className="muted">For the AI receptionist, open your phone number in Vapi, leave its assistant empty and set its server URL to this address. Outbound call results use it automatically.</p>
+          {vapiUrl ? <code className="pre">{vapiUrl}</code> : null}
           <ActionForm action={rotateWebhookToken}>
             <input type="hidden" name="workspace_id" value={workspace.id} />
             <SubmitButton variant="secondary">Create a new address</SubmitButton>

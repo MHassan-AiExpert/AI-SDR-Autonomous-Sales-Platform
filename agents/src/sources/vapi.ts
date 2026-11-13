@@ -34,3 +34,17 @@ export async function startCall(apiKey: string, c: StartCall, fetchImpl?: Fetch)
   if (!id) throw new Error('Vapi did not return a call id');
   return id;
 }
+
+/** The call as Vapi has it in the company's own account: the trusted copy of an inbound call. */
+export async function getCall(apiKey: string, id: string, fetchImpl?: Fetch): Promise<Record<string, unknown> | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  try {
+    const body = await requestJson('Vapi', `https://api.vapi.ai/call/${encodeURIComponent(id)}`, {
+      method: 'GET', headers: { Authorization: `Bearer ${apiKey}` },
+    }, { fetchImpl, timeoutMs: 20_000 });
+    return isObject(body) ? body : null;
+  } catch (err) {
+    if (err instanceof Error && 'status' in err && (err as { status: number | null }).status === 404) return null;
+    throw err;
+  }
+}

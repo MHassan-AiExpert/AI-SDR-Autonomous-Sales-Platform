@@ -13,6 +13,7 @@ import { BOOKING_EVENT_TYPE } from '@/lib/replies';
 import { parseVoiceSettings, voiceReadiness } from '@/lib/voice';
 import { parseTextSettings, textReadiness } from '@/lib/texting';
 import { closerAssistantSchema } from '@/lib/closer';
+import { parseReceptionistSettings } from '@/lib/receptionist';
 
 const NO_PERMISSION = 'Only owners and admins can manage campaigns.';
 
@@ -348,4 +349,44 @@ export async function saveCloserSettings(_prev: FormState, form: FormData): Prom
   if (!data?.length) return { error: NO_PERMISSION };
   revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
   return { notice: parsed ? 'Closer saved.' : 'Closer removed. Meetings for this campaign go to your team.' };
+}
+
+export async function saveReceptionistSettings(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  const parsed = parseReceptionistSettings(form);
+  if (!parsed.success) return { error: firstError(parsed.error) };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('campaigns').update({ ...parsed.data, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data).eq('id', campaignId.data).select('id');
+  if (error?.code === '23505') return { error: 'Another campaign already answers this phone number.' };
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
+  return { notice: 'Receptionist settings saved.' };
+}
+
+export async function setReceptionistStatus(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  const status = form.get('status');
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  if (status !== 'live' && status !== 'off') return { error: 'Unknown status.' };
+  const { supabase } = await requireUser();
+  if (status === 'live') {
+    const [{ data: c }, { data: tools }] = await Promise.all([
+      supabase.from('campaigns').select('vapi_receptionist_assistant_id, vapi_inbound_number_id').eq('workspace_id', ws.data).eq('id', campaignId.data).maybeSingle(),
+      supabase.from('integrations').select('status').eq('workspace_id', ws.data).eq('tool', 'vapi'),
+    ]);
+    if (!c) return { error: 'Campaign not found.' };
+    if (!(tools ?? []).some((t) => t.status === 'connected')) return { error: 'Connect Vapi in Setup before switching on the receptionist.' };
+    if (!c.vapi_receptionist_assistant_id || !c.vapi_inbound_number_id) return { error: 'Add the receptionist assistant and phone number first.' };
+  }
+  const { data, error } = await supabase.from('campaigns').update({ receptionist_status: status, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data).eq('id', campaignId.data).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
+  return { notice: status === 'live' ? 'The AI receptionist answers your calls from now on.' : 'Receptionist off. Calls go to your team number.' };
 }

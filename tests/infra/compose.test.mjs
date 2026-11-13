@@ -229,9 +229,14 @@ test('INF-23 the Calendly events workflow forwards the raw signed body and Calen
   assert.equal(services['agent-service'].environment.WEBHOOK_BASE_URL, '${N8N_PUBLIC_URL:-}');
 });
 
-test('INF-24 the Vapi call events workflow forwards call results signed', () => {
+test('INF-24 the Vapi call events workflow forwards call events signed and returns the agent answer to Vapi', () => {
   const wf = JSON.parse(readFileSync(new URL('infra/n8n/workflows/vapi-events.json', root), 'utf8'));
-  assert.equal(wf.nodes.find((n) => n.type === 'n8n-nodes-base.webhook').parameters.path, 'vapi/:token');
+  const hook = wf.nodes.find((n) => n.type === 'n8n-nodes-base.webhook').parameters;
+  assert.equal(hook.path, 'vapi/:token');
+  // The agent's answer is returned to Vapi, which needs it for inbound assistant requests within its time limit
+  assert.equal(hook.responseMode, 'lastNode');
+  assert.equal(hook.responseData, 'firstEntryJson');
+  assert.ok(wf.nodes.find((n) => n.type === 'n8n-nodes-base.httpRequest').parameters.options.timeout <= 7500);
   assert.match(wf.nodes.find((n) => n.type === 'n8n-nodes-base.code').parameters.jsCode, /createHmac\('sha256', \$env\.PLATFORM_HMAC_SECRET\)/);
   assert.match(wf.nodes.find((n) => n.type === 'n8n-nodes-base.httpRequest').parameters.url, /\/webhooks\/vapi/);
   assert.ok(planImport(new URL('infra/n8n/workflows', root).pathname).workflows.some((w) => w.id === 'aisdrVapiEvents1'));

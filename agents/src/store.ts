@@ -79,6 +79,12 @@ export type Campaign = {
   vapi_closer_assistant_id: string | null;
 };
 
+export type ReceptionistCampaign = {
+  id: string; name: string; status: string; receptionist_status: string; vapi_receptionist_assistant_id: string | null;
+  vapi_inbound_number_id: string; receptionist_transfer_number: string | null; receptionist_notes: string | null;
+  sms_from: string | null; booking_event_type: string | null; sender_name: string | null; offer: string | null;
+};
+
 export class Store {
   readonly sql: Sql;
   constructor(sql: Sql) {
@@ -1205,6 +1211,116 @@ export class Store {
         insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
         values (${workspaceId}::uuid, ${d.lead_id}::uuid, 'status_change', null, ${`Paid${d.plan_name ? ` for ${d.plan_name}` : ''}: deal won`}, 'system', 'deals', ${d.id}::uuid)`;
       return { leadId: d.lead_id as string, name: String(lead?.name ?? ''), plan: (d.plan_name ?? null) as string | null, value: d.value_cents === null ? null : Number(d.value_cents), currency: String(d.currency) };
+    });
+  }
+
+  // ---------------------------------------------------------------- receptionist
+
+  async receptionistCampaign(workspaceId: string, phoneNumberId: string): Promise<ReceptionistCampaign | null> {
+    const rows = await this.sql`
+      select id, name, status, receptionist_status, vapi_receptionist_assistant_id, vapi_inbound_number_id, receptionist_transfer_number,
+             receptionist_notes, sms_from, booking_event_type, sender_name, offer
+      from campaigns where workspace_id = ${workspaceId}::uuid and vapi_inbound_number_id = ${phoneNumberId}`;
+    return (rows[0] ?? null) as ReceptionistCampaign | null;
+  }
+
+  /** What the receptionist may know about a caller: first name and company only. */
+  async callerContext(workspaceId: string, phone: string): Promise<{ first_name: string | null; company_name: string | null } | null> {
+    const rows = await this.sql`
+      select split_part(coalesce(l.full_name, ''), ' ', 1) as first_name, c.name as company_name
+      from leads l left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      where l.workspace_id = ${workspaceId}::uuid and l.phone = ${phone}
+      order by l.updated_at desc limit 1`;
+    if (!rows.length) return null;
+    return { first_name: (rows[0].first_name as string) || null, company_name: (rows[0].company_name ?? null) as string | null };
+  }
+
+  /**
+   * Records an inbound call once: the caller is matched to a lead by number,
+   * then email, or added as a new lead; the outcome is applied. Returns null
+   * when the call was already recorded.
+   */
+  async saveInboundCall(workspaceId: string, campaignId: string, r: {
+    providerId: string; from: string; outcome: import('./receptionist.ts').ReceptionOutcome; callerName: string | null; email: string | null;
+    summary: string | null; transcript: string | null; recordingUrl: string | null; duration: number | null; startedAt: string | null;
+    endedAt: string | null; endedReason: string | null; analysis: Record<string, unknown>; callbackTime: string | null; okToText: boolean;
+  }): Promise<{ leadId: string; callId: string; name: string; created: boolean; stage: string } | null> {
+    return this.sql.begin(async (tx) => {
+      // Each Vapi call is recorded once
+      if ((await tx`select 1 from calls where workspace_id = ${workspaceId}::uuid and provider = 'vapi' and provider_call_id = ${r.providerId}`).length) return null;
+      let lead = (await tx`select id, stage, email, full_name, consent from leads where workspace_id = ${workspaceId}::uuid and phone = ${r.from} order by updated_at desc limit 1`)[0];
+      if (!lead && r.email) lead = (await tx`select id, stage, email, full_name, consent from leads where workspace_id = ${workspaceId}::uuid and lower(email) = ${r.email} limit 1`)[0];
+      let created = false;
+      if (!lead) {
+        lead = (await tx`
+          insert into leads (workspace_id, campaign_id, full_name, email, phone, source_channel, source_query, stage)
+          values (${workspaceId}::uuid, ${campaignId}::uuid, ${r.callerName}, ${r.email}, ${r.from}, 'inbound_call', 'Called the company number', 'new')
+          returning id, stage, email, full_name, consent`)[0];
+        created = true;
+      } else {
+        // An email the caller gave is added only if no other lead already has it
+        const emailFree = r.email ? !(await tx`select 1 from leads where workspace_id = ${workspaceId}::uuid and lower(email) = ${r.email} and id <> ${lead.id}::uuid`).length : false;
+        await tx`
+          update leads set full_name = coalesce(full_name, ${r.callerName}), phone = coalesce(phone, ${r.from}),
+            email = coalesce(email, ${emailFree ? r.email : null}), updated_at = now()
+          where workspace_id = ${workspaceId}::uuid and id = ${lead.id}::uuid`;
+      }
+      const leadId = lead.id as string;
+      const outcomeMap: Record<string, string> = {
+        meeting_requested: 'interested', callback_requested: 'callback', question_answered: 'answered', existing_customer: 'answered',
+        transferred: 'transferred', not_a_fit: 'not_interested', do_not_call: 'do_not_call', spam: 'spam', no_conversation: 'no_answer',
+      };
+      const calls = await tx`
+        insert into calls (workspace_id, lead_id, campaign_id, agent, direction, from_number, provider, provider_call_id, status, outcome, summary,
+                           transcript, recording_url, duration_seconds, started_at, ended_at, ended_reason, analysis, handed_off, idempotency_key)
+        values (${workspaceId}::uuid, ${leadId}::uuid, ${campaignId}::uuid, 'receptionist', 'inbound', ${r.from}, 'vapi', ${r.providerId}, 'ended',
+                ${outcomeMap[r.outcome] ?? 'answered'}, ${r.summary}, ${r.transcript}, ${r.recordingUrl}, ${r.duration}, ${r.startedAt}::timestamptz,
+                coalesce(${r.endedAt}::timestamptz, now()), ${r.endedReason}, ${tx.json({ ...r.analysis, receptionist_outcome: r.outcome } as postgres.JSONValue)},
+                ${r.outcome === 'transferred' || r.outcome === 'existing_customer'}, ${`vapi:${r.providerId}`})
+        on conflict (workspace_id, idempotency_key) do nothing
+        returning id`;
+      if (!calls.length) return null;
+      const callId = calls[0].id as string;
+      // A caller who asks to be called back, or agrees to a text, has asked us to contact them
+      const consent = { ...((lead.consent ?? {}) as Record<string, unknown>) };
+      const stamp = { at: new Date().toISOString(), source: 'receptionist_call', call_id: callId };
+      if (r.outcome === 'callback_requested' && !consent.voice) Object.assign(consent, { voice: 'inbound_request', voice_recorded_at: stamp.at, voice_source: stamp.source, voice_call_id: callId });
+      if (r.outcome === 'meeting_requested' && r.okToText && !consent.sms) Object.assign(consent, { sms: 'inbound_request', sms_recorded_at: stamp.at, sms_source: stamp.source, sms_call_id: callId });
+      const target = r.outcome === 'meeting_requested' || r.outcome === 'callback_requested' ? 'interested'
+        : r.outcome === 'question_answered' || r.outcome === 'transferred' || r.outcome === 'existing_customer' ? 'engaged'
+          : r.outcome === 'not_a_fit' ? 'not_interested' : r.outcome === 'do_not_call' ? 'do_not_contact' : String(lead.stage);
+      const stage = nextStage(String(lead.stage), target);
+      await tx`update leads set consent = ${tx.json(consent as postgres.JSONValue)}, stage = ${stage},
+                 stage_changed_at = case when stage <> ${stage} then now() else stage_changed_at end, updated_at = now()
+               where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid`;
+      const labels: Record<string, string> = {
+        meeting_requested: 'wants a meeting', callback_requested: 'asked to be called back', question_answered: 'question answered',
+        existing_customer: 'existing customer, passed to the team', transferred: 'put through to the team', not_a_fit: 'not a fit',
+        do_not_call: 'asked not to be called', spam: 'spam', no_conversation: 'no conversation',
+      };
+      const minutes = r.duration ? ` (${Math.round(r.duration / 6) / 10} min)` : '';
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'call', 'voice', ${`Inbound call, AI receptionist: ${labels[r.outcome]}${minutes}${r.summary ? `. ${r.summary}` : ''}`.slice(0, 500)}, 'ai', 'calls', ${callId}::uuid)`;
+      const task = async (channel: string, due: Date) => { await tx`insert into follow_ups (workspace_id, lead_id, channel, due_at) values (${workspaceId}::uuid, ${leadId}::uuid, ${channel}, ${due})`; };
+      if (r.outcome === 'callback_requested') {
+        const t = r.callbackTime && !Number.isNaN(Date.parse(r.callbackTime)) ? new Date(r.callbackTime) : null;
+        await task('voice', t && t.getTime() > Date.now() && t.getTime() < Date.now() + 60 * 86_400_000 ? t : new Date());
+      }
+      if (r.outcome === 'existing_customer') await task('manual', new Date());
+      if (r.outcome === 'do_not_call') {
+        await tx`insert into suppressions (workspace_id, kind, value, reason, created_by) values (${workspaceId}::uuid, 'phone', ${r.from}, 'do_not_call', null) on conflict (workspace_id, kind, value) do nothing`;
+        await tx`update emails set status = 'cancelled' where workspace_id = ${workspaceId}::uuid and lead_id = ${leadId}::uuid and status in ('queued', 'approved', 'draft')`;
+      }
+      const name = String(r.callerName ?? lead.full_name ?? lead.email ?? r.from);
+      return { leadId, callId, name, created, stage };
+    });
+  }
+
+  async addTask(workspaceId: string, leadId: string, channel: 'manual' | 'voice' | 'sms', summary: string) {
+    await this.sql.begin(async (tx) => {
+      await tx`insert into follow_ups (workspace_id, lead_id, channel, due_at) values (${workspaceId}::uuid, ${leadId}::uuid, ${channel}, now())`;
+      await tx`insert into activities (workspace_id, lead_id, type, channel, summary, actor) values (${workspaceId}::uuid, ${leadId}::uuid, 'task', ${channel}, ${summary.slice(0, 500)}, 'system')`;
     });
   }
 

@@ -11,6 +11,8 @@ import { OutreachSection, type OutreachCampaign } from './outreach-section';
 import { VoiceSection, type VoiceCampaign } from './voice-section';
 import { TextSection, type TextCampaign } from './text-section';
 import { CloserSection } from './closer-section';
+import { ReceptionistSection, type ReceptionistCampaign } from './receptionist-section';
+import { vapiServerUrl } from '@/lib/receptionist';
 import { readPlaybook } from '@/lib/closer';
 
 export const metadata: Metadata = { title: 'Campaign' };
@@ -25,14 +27,14 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
 
   const { data: campaign } = await supabase
     .from('campaigns')
-    .select('id, name, niche, offer, status, target_areas, daily_lead_limit, score_threshold, icp, source_plan, created_at, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start, send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state, auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start, call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at, sms_status, sms_channel, sms_from, whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages, vapi_closer_assistant_id')
+    .select('id, name, niche, offer, status, target_areas, daily_lead_limit, score_threshold, icp, source_plan, created_at, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start, send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state, auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start, call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at, sms_status, sms_channel, sms_from, whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages, vapi_closer_assistant_id, receptionist_status, vapi_receptionist_assistant_id, vapi_inbound_number_id, receptionist_transfer_number, receptionist_notes')
     .eq('workspace_id', workspace.id)
     .eq('id', campaignId)
     .maybeSingle();
   if (!campaign) notFound();
 
   const emailCount = (status: string) => supabase.from('emails').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).eq('status', status);
-  const [{ data: jobs }, { count: leadCount }, { count: verified }, { count: awaiting }, { count: qualified }, { count: drafts }, { count: approvedEmails }, { count: queuedEmails }, { data: instantly }, { data: vapi }, { count: callsToday }, { data: twilio }, { count: textsToday }, { data: payTools }, { data: playbookRow }] = await Promise.all([
+  const [{ data: jobs }, { count: leadCount }, { count: verified }, { count: awaiting }, { count: qualified }, { count: drafts }, { count: approvedEmails }, { count: queuedEmails }, { data: instantly }, { data: vapi }, { count: callsToday }, { data: twilio }, { count: textsToday }, { data: payTools }, { data: playbookRow }, { data: hook }, { data: calendly }] = await Promise.all([
     supabase.from('agent_jobs').select('id, type, status, result, error, created_at, finished_at')
       .eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).order('created_at', { ascending: false }).limit(20),
     supabase.from('leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id),
@@ -47,7 +49,12 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
     supabase.from('messages').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).eq('direction', 'outbound').not('step', 'is', null).gte('created_at', new Date(new Date().setUTCHours(0, 0, 0, 0)).toISOString()),
     supabase.from('integrations').select('tool, status').eq('workspace_id', workspace.id).in('tool', ['stripe', 'pandadoc']),
     supabase.from('playbooks').select('content').eq('workspace_id', workspace.id).eq('is_active', true).maybeSingle(),
+    // The webhook address is a secret; only owners and admins see it
+    manage ? supabase.from('workspaces').select('webhook_token').eq('id', workspace.id).maybeSingle() : Promise.resolve({ data: null }),
+    supabase.from('integrations').select('status').eq('workspace_id', workspace.id).eq('tool', 'calendly').maybeSingle(),
   ]);
+  const hookBase = process.env.NEXT_PUBLIC_WEBHOOK_BASE_URL;
+  const serverUrl = vapiServerUrl(hookBase, (hook as { webhook_token?: string } | null)?.webhook_token ?? null);
   const playbook = readPlaybook(playbookRow?.content);
   const toolOn = (t: string) => (payTools ?? []).some((x) => x.tool === t && x.status === 'connected');
   const checklist = (workspace.setup_checklist ?? {}) as Record<string, unknown>;
@@ -155,6 +162,18 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
           closerEnabled: workspace.ai_closer_enabled, vapiConnected: vapi?.status === 'connected', playbookReady: Boolean(playbook),
           assistantId: campaign.vapi_closer_assistant_id, phoneNumberId: campaign.vapi_phone_number_id,
           stripeConnected: toolOn('stripe'), pandadocConnected: toolOn('pandadoc'), templateId: playbook?.proposal_template_id ?? null,
+        }}
+      />
+
+      <ReceptionistSection
+        workspaceId={workspace.id}
+        campaign={campaign as unknown as ReceptionistCampaign}
+        manage={manage}
+        serverUrl={serverUrl}
+        readiness={{
+          vapiConnected: vapi?.status === 'connected', voiceChannelOn: workspace.enabled_channels?.voice !== false,
+          assistantId: campaign.vapi_receptionist_assistant_id, numberId: campaign.vapi_inbound_number_id, webhookReady: Boolean(hookBase),
+          transferNumber: campaign.receptionist_transfer_number, smsSender: campaign.sms_from, calendlyConnected: calendly?.status === 'connected',
         }}
       />
 
