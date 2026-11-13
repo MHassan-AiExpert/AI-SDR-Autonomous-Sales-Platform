@@ -8,6 +8,7 @@ import { addMemberSchema, firstError, parseSettingsForm, roleSchema, uuidSchema 
 import { parsePlaybook } from '@/lib/closer';
 import { DECISIONS, DECISION_NOTICES, type Decision } from '@/lib/learning';
 import { spendSchema } from '@/lib/analytics';
+import { parseCrmForm } from '@/lib/crm';
 
 const NO_PERMISSION = 'You do not have permission to do that.';
 
@@ -266,4 +267,40 @@ export async function saveSpend(_prev: FormState, form: FormData): Promise<FormS
   if (!data?.length) return { error: NO_PERMISSION };
   revalidatePath(`/w/${workspaceId}/analytics`);
   return { notice: parsed.data.monthly_spend === null ? 'Spend cleared.' : 'Spend saved. Cost per meeting now uses it.' };
+}
+
+export async function saveCrmSettings(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  if (!workspaceId) return { error: 'Workspace not found.' };
+  const parsed = parseCrmForm(form);
+  if (!parsed.success) return { error: firstError(parsed.error) };
+  const { supabase } = await requireUser();
+  if (parsed.data.crm_sync_enabled) {
+    const { data: hub } = await supabase.from('integrations').select('status').eq('workspace_id', workspaceId).eq('tool', 'hubspot').maybeSingle();
+    if (hub?.status !== 'connected') return { error: 'Connect HubSpot in Setup before switching sync on.' };
+  }
+  const { data, error } = await supabase.from('workspaces').update(parsed.data).eq('id', workspaceId).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${workspaceId}/settings`);
+  return { notice: parsed.data.crm_sync_enabled ? 'CRM sync is on. Leads, deals and activity go to HubSpot every hour.' : 'CRM sync saved and switched off.' };
+}
+
+export async function syncCrmNow(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  if (!workspaceId) return { error: 'Workspace not found.' };
+  const { supabase, user } = await requireUser();
+  const { data: ws } = await supabase.from('workspaces').select('crm_sync_enabled').eq('id', workspaceId).maybeSingle();
+  if (!ws?.crm_sync_enabled) return { error: 'Switch CRM sync on first.' };
+  const { data: campaigns } = await supabase.from('campaigns').select('id').eq('workspace_id', workspaceId).eq('status', 'active');
+  if (!campaigns?.length) return { error: 'There are no active campaigns to sync.' };
+  let queued = 0;
+  for (const c of campaigns) {
+    const { error } = await supabase.from('agent_jobs').insert({ workspace_id: workspaceId, campaign_id: c.id, type: 'crm_sync', requested_by: user.id });
+    if (error?.code === '42501') return { error: NO_PERMISSION };
+    if (error && error.code !== '23505') return { error: friendlyDbError(error) };
+    if (!error) queued++;
+  }
+  revalidatePath(`/w/${workspaceId}/settings`);
+  return { notice: queued ? 'HubSpot will be brought up to date within a minute.' : 'A sync is already waiting to run.' };
 }

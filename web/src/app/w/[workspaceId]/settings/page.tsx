@@ -3,7 +3,8 @@ import { ActionForm, SubmitButton } from '@/components/action-form';
 import { canManageSettings } from '@/lib/roles';
 import { requireWorkspace } from '@/lib/session';
 import { CHANNELS, CHANNEL_LABELS } from '@/lib/validation';
-import { rotateWebhookToken, updateSettings } from '../actions';
+import { rotateWebhookToken, saveCrmSettings, syncCrmNow, updateSettings } from '../actions';
+import { CRM_SCOPES, CRM_SCOPE_LABELS, DEAL_STAGES, DEAL_STAGE_LABELS, savedStage } from '@/lib/crm';
 import { inboundWebhookUrl } from '@/lib/texting';
 import { vapiServerUrl } from '@/lib/receptionist';
 
@@ -13,7 +14,14 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
   const { workspaceId } = await params;
   const { supabase, workspace } = await requireWorkspace(workspaceId);
   const manage = canManageSettings(workspace.role);
-  const { data: extra } = await supabase.from('workspaces').select('slack_channel').eq('id', workspace.id).maybeSingle();
+  const { data: extra } = await supabase.from('workspaces')
+    .select('slack_channel, crm_sync_enabled, crm_sync_scope, crm_pipeline_id, crm_stage_map, crm_synced_at').eq('id', workspace.id).maybeSingle();
+  const [{ data: hub }, { data: links }] = await Promise.all([
+    supabase.from('integrations').select('status').eq('workspace_id', workspace.id).eq('tool', 'hubspot').maybeSingle(),
+    supabase.from('crm_links').select('record_type').eq('workspace_id', workspace.id).limit(10000),
+  ]);
+  const linked = (t: string) => (links ?? []).filter((l) => l.record_type === t).length;
+  const hubConnected = hub?.status === 'connected';
   // The webhook address is a secret; only owners and admins see it
   const { data: hook } = manage ? await supabase.from('workspaces').select('webhook_token').eq('id', workspace.id).maybeSingle() : { data: null };
   const hookBase = (process.env.NEXT_PUBLIC_WEBHOOK_BASE_URL ?? '').replace(/\/$/, '');
@@ -73,6 +81,58 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
 
         {manage ? <SubmitButton>Save settings</SubmitButton> : null}
       </ActionForm>
+
+
+      <section className="card stack" aria-labelledby="crm">
+        <div className="spread">
+          <h2 id="crm">CRM sync</h2>
+          <span className={extra?.crm_sync_enabled ? 'badge badge-ok' : 'badge'}>{extra?.crm_sync_enabled ? 'On' : 'Off'}</span>
+        </div>
+        <p className="muted">Optional. Sends leads to HubSpot contacts (matched by email), deals to the pipeline you choose, and replies, meetings and calls as notes on the contact. Runs every hour and sends only what changed. Deals marked won or lost in HubSpot are closed here too.</p>
+        {!hubConnected ? <p><span className="badge badge-warn">Needs attention</span> HubSpot is {hub?.status === 'expired' || hub?.status === 'error' ? 'not working: reconnect it' : 'not connected yet'} in <a href={`/w/${workspace.id}/setup`}>Setup</a>.</p> : null}
+        <dl className="stats">
+          <div><dt>Contacts in HubSpot</dt><dd>{linked('lead')}</dd></div>
+          <div><dt>Deals in HubSpot</dt><dd>{linked('deal')}</dd></div>
+          <div><dt>Activity notes</dt><dd>{linked('activity')}</dd></div>
+          <div><dt>Last sync</dt><dd>{extra?.crm_synced_at ? `${new Date(extra.crm_synced_at).toUTCString().slice(5, 22)} UTC` : 'Not yet'}</dd></div>
+        </dl>
+        <ActionForm action={saveCrmSettings} className="stack">
+          <input type="hidden" name="workspace_id" value={workspace.id} />
+          <fieldset className="stack" disabled={!manage}>
+            <legend className="sr-only">CRM sync settings</legend>
+            <label className="choice">
+              <input type="checkbox" name="crm_sync_enabled" defaultChecked={Boolean(extra?.crm_sync_enabled)} />
+              <span><strong>Sync with HubSpot</strong><br />Needs a HubSpot private app token with contacts, deals and notes access.</span>
+            </label>
+            {CRM_SCOPES.map((s) => (
+              <label key={s} className="choice">
+                <input type="radio" name="crm_sync_scope" value={s} defaultChecked={(extra?.crm_sync_scope ?? 'engaged') === s} />
+                <span>{CRM_SCOPE_LABELS[s]}</span>
+              </label>
+            ))}
+            <label className="field">
+              <span>Pipeline id</span>
+              <input name="crm_pipeline_id" type="text" maxLength={64} defaultValue={extra?.crm_pipeline_id ?? 'default'} />
+              <small className="muted">Leave as default for HubSpot&apos;s sales pipeline. For another pipeline, enter its id and the id of each stage below.</small>
+            </label>
+            <div className="grid-2">
+              {DEAL_STAGES.map((s) => (
+                <label key={s} className="field">
+                  <span>{DEAL_STAGE_LABELS[s]}</span>
+                  <input name={`stage_${s}`} type="text" maxLength={64} defaultValue={savedStage(extra?.crm_stage_map, s)} />
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          {manage ? <SubmitButton>Save CRM sync</SubmitButton> : null}
+        </ActionForm>
+        {manage && extra?.crm_sync_enabled ? (
+          <ActionForm action={syncCrmNow}>
+            <input type="hidden" name="workspace_id" value={workspace.id} />
+            <SubmitButton variant="secondary">Sync now</SubmitButton>
+          </ActionForm>
+        ) : null}
+      </section>
 
       {manage ? (
         <section className="card stack" aria-labelledby="webhook">

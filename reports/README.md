@@ -29,5 +29,6 @@ Every feature of the platform ships with three documents:
 | [F15](F15-website-audits/feature-report.md) | Website and marketing audits: 13 checks measured in code, AI recommendations for failed checks, private tracked page, first email links to it, opens alert the team | M5, M11, M15, M16 | 36 passed + 2 live checks |
 | [F16](F16-self-learning/feature-report.md) | Self-learning: weekly results measured in code with significance tests, copy lessons and threshold suggestions with evidence, approval or auto-apply | M4, M5, M10, M11, M24 | 35 passed + 2 live checks |
 | [F17](F17-analytics-dashboard/feature-report.md) | Reporting and analytics: funnel with step rates, daily chart, channel and campaign results, revenue, cost per meeting, safe CSV export | M10, M20, M23 | 26 passed + 2 live checks |
+| [F18](F18-crm-sync/feature-report.md) | CRM sync with HubSpot: contacts by email with lead status, deals in a chosen pipeline, activity notes, wins and losses read back, only changes sent | M9, M20, M23 | 41 passed + 2 live checks |
 
 Run the infrastructure and database tests with `npm test`, the agent service tests with `cd agents && npm test`, and the web app tests with `cd web && npm test`.

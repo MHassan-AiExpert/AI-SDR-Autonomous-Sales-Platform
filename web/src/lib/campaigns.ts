@@ -1,6 +1,7 @@
 // Campaign and lead helpers shared by the campaign and lead screens.
 
 import { z } from 'zod';
+import { describeCrmSync } from './crm';
 
 export const LEAD_SOURCES = ['apollo', 'google_maps', 'instagram', 'llm_search', 'facebook', 'linkedin', 'tiktok', 'x', 'clay', 'csv', 'inbound_call', 'manual'] as const;
 export type LeadSource = (typeof LEAD_SOURCES)[number];
@@ -110,9 +111,9 @@ export function filtersToQuery(f: LeadFilters, overrides: Partial<LeadFilters> =
   return s ? `?${s}` : '';
 }
 
-export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies', reply_send: 'Send answers', voice_outreach: 'AI calls', sms_outreach: 'Text follow-ups', ai_closer: 'AI closer', audit_reports: 'Website audits', learning: 'Weekly learning' };
+export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies', reply_send: 'Send answers', voice_outreach: 'AI calls', sms_outreach: 'Text follow-ups', ai_closer: 'AI closer', audit_reports: 'Website audits', learning: 'Weekly learning', crm_sync: 'CRM sync' };
 
-export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach', 'voice_outreach', 'sms_outreach', 'ai_closer', 'audit_reports', 'learning'] as const;
+export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach', 'voice_outreach', 'sms_outreach', 'ai_closer', 'audit_reports', 'learning', 'crm_sync'] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 export const JOB_STATUS_LABELS: Record<string, string> = { queued: 'Queued', running: 'Running', succeeded: 'Done', failed: 'Failed' };
 
@@ -148,6 +149,7 @@ export function describeJobResult(type: string, status: string, result: unknown,
     const held = Object.entries(reasons).map(([k, v]) => `${num(v)} ${k}`).join(', ');
     return `${plural(num(r.sent), 'text')} sent${num(r.failed) ? `, ${num(r.failed)} could not be sent` : ''}${held ? `; not texted: ${held}` : ''}.`;
   }
+  if (type === 'crm_sync') return describeCrmSync(r);
   if (type === 'learning') {
     if (!num(r.leads)) return 'No first emails in the last 90 days to learn from yet.';
     const parts = [`Looked at ${plural(num(r.leads), 'lead')}`, `${plural(num(r.findings), 'clear pattern')}`];

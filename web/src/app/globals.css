@@ -185,3 +185,6 @@ code.pre { display: block; padding: 10px 12px; background: var(--bg); border: 1p
 .chart-meetings, .key-meetings { stroke: #d97706; background: #d97706; }
 .key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: middle; }
 @media (max-width: 560px) { .funnel li { grid-template-columns: 1fr; } .funnel-label { grid-row: auto; } }
+
+/* CRM stage mapping */
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }

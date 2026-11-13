@@ -391,6 +391,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F15](reports/F15-website-audits/feature-report.md) | Website and marketing audits shared as private tracked pages | 36 passed |
 | [F16](reports/F16-self-learning/feature-report.md) | Self-learning from weekly results, with lessons for the copywriter | 35 passed |
 | [F17](reports/F17-analytics-dashboard/feature-report.md) | Reporting and analytics dashboard with funnel, channels, revenue and cost per meeting | 26 passed |
+| [F18](reports/F18-crm-sync/feature-report.md) | CRM sync with HubSpot: contacts, deals, activity notes and wins read back | 41 passed |
 
 ---
 

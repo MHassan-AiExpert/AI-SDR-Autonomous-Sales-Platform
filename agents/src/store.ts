@@ -24,7 +24,7 @@ export type Job = {
   id: string;
   workspace_id: string;
   campaign_id: string;
-  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning';
+  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning' | 'crm_sync';
   attempts: number;
   correlation_id: string;
 };
@@ -274,7 +274,7 @@ export class Store {
     return Number(rows[0].n);
   }
 
-  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning'): Promise<boolean> {
+  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning' | 'crm_sync'): Promise<boolean> {
     const rows = await this.sql`select agent_job_enqueue(${workspaceId}::uuid, ${campaignId}::uuid, ${type}) as ok`;
     return rows[0].ok === true;
   }
@@ -1430,6 +1430,125 @@ export class Store {
       }
       return { reportId: report, created, applied };
     });
+  }
+
+  // ---------------------------------------------------------------- CRM sync
+
+  async crmSettings(workspaceId: string) {
+    const rows = await this.sql`
+      select crm_sync_enabled as enabled, crm_sync_scope as scope, crm_pipeline_id as pipeline_id, crm_stage_map as stage_map
+      from workspaces where id = ${workspaceId}::uuid`;
+    return (rows[0] ?? null) as { enabled: boolean; scope: 'contacted' | 'engaged'; pipeline_id: string; stage_map: unknown } | null;
+  }
+
+  async crmLinks(workspaceId: string, type: 'lead' | 'deal' | 'activity', ids: string[]) {
+    const out = new Map<string, { external_id: string; fingerprint: string | null }>();
+    if (!ids.length) return out;
+    const rows = await this.sql`
+      select record_id, external_id, fingerprint from crm_links
+      where workspace_id = ${workspaceId}::uuid and provider = 'hubspot' and record_type = ${type} and record_id = any (${ids}::uuid[])`;
+    for (const r of rows) out.set(r.record_id as string, { external_id: r.external_id as string, fingerprint: (r.fingerprint ?? null) as string | null });
+    return out;
+  }
+
+  async saveCrmLink(workspaceId: string, type: 'lead' | 'deal' | 'activity', recordId: string, externalId: string, fp: string | null) {
+    await this.sql`
+      insert into crm_links (workspace_id, provider, record_type, record_id, external_id, fingerprint, synced_at)
+      values (${workspaceId}::uuid, 'hubspot', ${type}, ${recordId}::uuid, ${externalId}, ${fp}, now())
+      on conflict (workspace_id, provider, record_type, record_id)
+      do update set external_id = excluded.external_id, fingerprint = excluded.fingerprint, synced_at = now()`;
+  }
+
+  /** Leads in scope that are new to the CRM or changed since they were last sent. */
+  async crmLeads(workspaceId: string, campaignId: string, scope: 'contacted' | 'engaged', limit: number) {
+    const stages = scope === 'contacted'
+      ? ['contacted', 'engaged', 'interested', 'meeting_booked', 'won', 'lost', 'not_interested', 'do_not_contact']
+      : ['engaged', 'interested', 'meeting_booked', 'won', 'lost'];
+    return (await this.sql`
+      select l.id, l.email, l.full_name, l.phone, l.title, l.stage, l.score, l.linkedin_url, c.name as company, c.domain
+      from leads l
+      left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      left join crm_links k on k.workspace_id = l.workspace_id and k.provider = 'hubspot' and k.record_type = 'lead' and k.record_id = l.id
+      where l.workspace_id = ${workspaceId}::uuid and l.campaign_id = ${campaignId}::uuid and l.email is not null
+        and (l.stage = any (${stages}::text[]) or k.id is not null)
+        and (k.id is null or l.updated_at > k.synced_at or c.updated_at > k.synced_at)
+      order by l.updated_at
+      limit ${limit}`) as unknown as import('./crm.ts').CrmLead[];
+  }
+
+  async crmDeals(workspaceId: string, campaignId: string, limit: number) {
+    return (await this.sql`
+      select d.id, d.lead_id, d.stage, d.value_cents, d.currency, d.plan_name, d.closed_at,
+             coalesce(l.full_name, l.email) as lead_name, c.name as company
+      from deals d
+      join leads l on l.workspace_id = d.workspace_id and l.id = d.lead_id
+      left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      left join crm_links k on k.workspace_id = d.workspace_id and k.provider = 'hubspot' and k.record_type = 'deal' and k.record_id = d.id
+      where d.workspace_id = ${workspaceId}::uuid and coalesce(d.campaign_id, l.campaign_id) = ${campaignId}::uuid
+        and (k.id is null or d.updated_at > k.synced_at)
+      order by d.updated_at
+      limit ${limit}`).map((r) => ({ ...r, value_cents: r.value_cents === null ? null : Number(r.value_cents) })) as unknown as import('./crm.ts').CrmDeal[];
+  }
+
+  /** Open deals already in HubSpot, to read their stage back. */
+  async crmLinkedDeals(workspaceId: string, campaignId: string) {
+    return (await this.sql`
+      select k.record_id, k.external_id, d.stage
+      from crm_links k
+      join deals d on d.workspace_id = k.workspace_id and d.id = k.record_id
+      join leads l on l.workspace_id = d.workspace_id and l.id = d.lead_id
+      where k.workspace_id = ${workspaceId}::uuid and k.provider = 'hubspot' and k.record_type = 'deal'
+        and coalesce(d.campaign_id, l.campaign_id) = ${campaignId}::uuid and d.stage not in ('won', 'lost')
+      limit 500`) as unknown as { record_id: string; external_id: string; stage: string }[];
+  }
+
+  /** A win or loss recorded in the CRM. Deals already closed here are left alone. */
+  async closeDealFromCrm(workspaceId: string, dealId: string, stage: 'won' | 'lost'): Promise<boolean> {
+    return this.sql.begin(async (tx) => {
+      const rows = await tx`
+        update deals set stage = ${stage}, closed_at = coalesce(closed_at, now()), closed_by = coalesce(closed_by, 'human'), updated_at = now()
+        where workspace_id = ${workspaceId}::uuid and id = ${dealId}::uuid and stage not in ('won', 'lost')
+        returning lead_id`;
+      if (!rows.length) return false;
+      const leadId = rows[0].lead_id as string;
+      await tx`update leads set stage = ${stage}, stage_changed_at = now(), updated_at = now()
+               where workspace_id = ${workspaceId}::uuid and id = ${leadId}::uuid and stage <> ${stage} and stage <> 'do_not_contact'`;
+      await tx`
+        insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
+        values (${workspaceId}::uuid, ${leadId}::uuid, 'status_change', null, ${stage === 'won' ? 'Marked won in HubSpot' : 'Marked lost in HubSpot'}, 'system', 'deals', ${dealId}::uuid)`;
+      return true;
+    });
+  }
+
+  /** Replies, meetings and finished calls not yet noted in HubSpot, for leads already there. */
+  async crmActivities(workspaceId: string, campaignId: string, limit: number) {
+    const rows = await this.sql`
+      with lk as (
+        select k.record_id as lead_id from crm_links k
+        join leads l on l.workspace_id = k.workspace_id and l.id = k.record_id
+        where k.workspace_id = ${workspaceId}::uuid and k.provider = 'hubspot' and k.record_type = 'lead' and l.campaign_id = ${campaignId}::uuid
+      ), acts as (
+        select r.id, r.lead_id, 'reply' as kind, r.created_at as at,
+               jsonb_build_object('channel', r.channel, 'classification', r.classification, 'body', left(r.body, 1500)) as detail
+        from replies r join lk on lk.lead_id = r.lead_id where r.workspace_id = ${workspaceId}::uuid
+        union all
+        select m.id, m.lead_id, 'meeting', m.starts_at, jsonb_build_object('status', m.status, 'run_by', m.run_by, 'outcome', left(m.outcome, 500))
+        from meetings m join lk on lk.lead_id = m.lead_id where m.workspace_id = ${workspaceId}::uuid
+        union all
+        select k.id, k.lead_id, 'call', coalesce(k.ended_at, k.created_at),
+               jsonb_build_object('direction', k.direction, 'outcome', k.outcome, 'duration_seconds', k.duration_seconds, 'summary', left(k.summary, 1500))
+        from calls k join lk on lk.lead_id = k.lead_id where k.workspace_id = ${workspaceId}::uuid and k.status = 'ended'
+      )
+      select a.* from acts a
+      where not exists (select 1 from crm_links x where x.workspace_id = ${workspaceId}::uuid and x.provider = 'hubspot'
+                          and x.record_type = 'activity' and x.record_id = a.id)
+      order by a.at
+      limit ${limit}`;
+    return rows.map((r) => ({ ...r, at: new Date(r.at as string) })) as unknown as import('./crm.ts').CrmActivity[];
+  }
+
+  async crmSynced(workspaceId: string) {
+    await this.sql`update workspaces set crm_synced_at = now() where id = ${workspaceId}::uuid`;
   }
 
   async slackChannel(workspaceId: string): Promise<string | null> {

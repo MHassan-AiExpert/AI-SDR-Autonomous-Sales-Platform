@@ -74,6 +74,7 @@ export async function queueAgentJob(_prev: FormState, form: FormData): Promise<F
     ai_closer: 'The AI closer will check for meetings starting now and proposals to send within a minute.',
     audit_reports: 'The audit agent will audit new qualified leads within a minute.',
     learning: 'The learning agent will look at the latest results within a minute.',
+    crm_sync: 'This campaign will be synced to HubSpot within a minute.',
   };
   return { notice: notices[type] };
 }
