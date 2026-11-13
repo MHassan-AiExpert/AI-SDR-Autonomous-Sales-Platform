@@ -394,6 +394,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F18](reports/F18-crm-sync/feature-report.md) | CRM sync with HubSpot: contacts, deals, activity notes and wins read back | 41 passed |
 | [F19](reports/F19-monitoring-notifications/feature-report.md) | Monitoring, alerts and notifications with retries, automatic pausing and one-click handoffs | 46 passed |
 | [F20](reports/F20-white-label/feature-report.md) | White-label mode with agency brand, custom domains, agency console, client plans and usage export | 34 passed |
+| [F21](reports/F21-csv-import-bulk-actions/feature-report.md) | CSV lead import with hygiene and undo, plus bulk actions on the lead list | 34 passed |
 
 ---
 

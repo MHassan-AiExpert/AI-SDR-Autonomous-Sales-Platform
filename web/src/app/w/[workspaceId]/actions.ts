@@ -10,6 +10,8 @@ import { DECISIONS, DECISION_NOTICES, type Decision } from '@/lib/learning';
 import { spendSchema } from '@/lib/analytics';
 import { parseCrmForm } from '@/lib/crm';
 import { parseNotifyForm } from '@/lib/notifications';
+import { MAX_ROWS, describeImport } from '@/lib/csv';
+import { LEAD_STAGES, STAGE_LABELS } from '@/lib/campaigns';
 
 const NO_PERMISSION = 'You do not have permission to do that.';
 
@@ -334,4 +336,125 @@ export async function acceptHandoff(_prev: FormState, form: FormData): Promise<F
   if (data[0].lead_id) await supabase.from('leads').update({ owner_id: user.id }).eq('workspace_id', workspaceId).eq('id', data[0].lead_id);
   revalidatePath(`/w/${workspaceId}/notifications`);
   return { notice: 'It is yours. The lead is now assigned to you.' };
+}
+
+// ---------------------------------------------------------------- CSV import
+
+export async function importLeads(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  if (!workspaceId) return { error: 'Workspace not found.' };
+  const campaign = uuidSchema.safeParse(form.get('campaign_id'));
+  const filename = String(form.get('filename') ?? 'leads.csv').slice(0, 200);
+
+  let rows: unknown;
+  try {
+    rows = JSON.parse(String(form.get('rows') ?? '[]'));
+  } catch {
+    return { error: 'That file could not be read. Save it as CSV and try again.' };
+  }
+  if (!Array.isArray(rows) || !rows.length) return { error: 'There are no rows to import.' };
+  if (rows.length > MAX_ROWS) return { error: `Import up to ${MAX_ROWS.toLocaleString('en-US')} rows at a time.` };
+
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc('leads_import', {
+    ws: workspaceId, p_campaign: campaign.success ? campaign.data : null, p_filename: filename, p_rows: rows,
+  });
+  if (error?.code === '42501') return { error: 'You do not have permission to import leads here.' };
+  if (error) return { error: friendlyDbError(error) };
+  const r = data as { added: number; duplicates: number; suppressed: number; invalid: number } | null;
+  if (!r) return { error: 'The import did not complete. Please try again.' };
+  revalidatePath(`/w/${workspaceId}/leads`);
+  return { notice: describeImport(r) };
+}
+
+export async function undoImport(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  const importId = uuidSchema.safeParse(form.get('import_id'));
+  if (!workspaceId || !importId.success) return { error: 'Import not found.' };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc('lead_import_undo', { p_import: importId.data });
+  if (error?.code === '42501' || /Only owners and admins/.test(error?.message ?? '')) {
+    return { error: 'Only owners and admins can undo an import.' };
+  }
+  if (error) return { error: friendlyDbError(error) };
+  revalidatePath(`/w/${workspaceId}/leads`);
+  const n = Number(data ?? 0);
+  return { notice: n ? `${n} ${n === 1 ? 'lead' : 'leads'} removed. Leads that had been worked were kept.` : 'Nothing to remove: every lead from that import had been worked.' };
+}
+
+// ---------------------------------------------------------------- bulk actions
+
+const BULK_ACTIONS = ['stage', 'owner', 'campaign', 'suppress'] as const;
+
+export async function bulkUpdateLeads(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  if (!workspaceId) return { error: 'Workspace not found.' };
+  const action = String(form.get('bulk_action') ?? '');
+  if (!(BULK_ACTIONS as readonly string[]).includes(action)) return { error: 'Choose what to do with the selected leads.' };
+
+  const ids = form.getAll('lead_id').map((v) => uuidSchema.safeParse(v)).filter((p) => p.success).map((p) => p.data as string);
+  if (!ids.length) return { error: 'Select at least one lead first.' };
+  if (ids.length > 500) return { error: 'Select up to 500 leads at a time.' };
+
+  const { supabase, user } = await requireUser();
+  const now = new Date().toISOString();
+
+  if (action === 'stage') {
+    const stage = String(form.get('stage') ?? '');
+    if (!(LEAD_STAGES as readonly string[]).includes(stage)) return { error: 'Choose a stage.' };
+    const label = STAGE_LABELS[stage as (typeof LEAD_STAGES)[number]];
+    const { data, error } = await supabase.from('leads')
+      .update({ stage, stage_changed_at: now, updated_at: now })
+      .eq('workspace_id', workspaceId).in('id', ids).select('id');
+    if (error) return { error: friendlyDbError(error) };
+    if (!data?.length) return { error: NO_PERMISSION };
+    revalidatePath(`/w/${workspaceId}/leads`);
+    return { notice: `${data.length} ${data.length === 1 ? 'lead' : 'leads'} moved to ${label}.` };
+  }
+
+  if (action === 'owner') {
+    const raw = String(form.get('owner_id') ?? '');
+    const owner = raw === 'me' ? user.id : raw === 'none' ? null : null;
+    if (raw !== 'me' && raw !== 'none') return { error: 'Choose who should own these leads.' };
+    const { data, error } = await supabase.from('leads')
+      .update({ owner_id: owner, updated_at: now }).eq('workspace_id', workspaceId).in('id', ids).select('id');
+    if (error) return { error: friendlyDbError(error) };
+    if (!data?.length) return { error: NO_PERMISSION };
+    revalidatePath(`/w/${workspaceId}/leads`);
+    return { notice: owner ? `${data.length} assigned to you.` : `${data.length} unassigned.` };
+  }
+
+  if (action === 'campaign') {
+    const campaign = uuidSchema.safeParse(form.get('campaign_id'));
+    if (!campaign.success) return { error: 'Choose a campaign.' };
+    const { data, error } = await supabase.from('leads')
+      .update({ campaign_id: campaign.data, updated_at: now }).eq('workspace_id', workspaceId).in('id', ids).select('id');
+    if (error) return { error: friendlyDbError(error) };
+    if (!data?.length) return { error: NO_PERMISSION };
+    revalidatePath(`/w/${workspaceId}/leads`);
+    return { notice: `${data.length} ${data.length === 1 ? 'lead' : 'leads'} moved to that campaign.` };
+  }
+
+  // Suppress: stop all outreach, and keep the addresses out of future imports
+  const { data: picked, error: readError } = await supabase.from('leads')
+    .select('id, email, phone').eq('workspace_id', workspaceId).in('id', ids);
+  if (readError) return { error: friendlyDbError(readError) };
+  if (!picked?.length) return { error: 'Those leads were not found.' };
+
+  const entries = picked.flatMap((l) => [
+    ...(l.email ? [{ workspace_id: workspaceId, kind: 'email', value: String(l.email).toLowerCase().trim(), reason: 'manual' }] : []),
+    ...(l.phone ? [{ workspace_id: workspaceId, kind: 'phone', value: String(l.phone).toLowerCase().trim(), reason: 'manual' }] : []),
+  ]);
+  if (entries.length) {
+    const { error } = await supabase.from('suppressions').upsert(entries, { onConflict: 'workspace_id,kind,value', ignoreDuplicates: true });
+    if (error?.code === '42501') return { error: NO_PERMISSION };
+    if (error) return { error: friendlyDbError(error) };
+  }
+  const { data, error } = await supabase.from('leads')
+    .update({ stage: 'do_not_contact', stage_changed_at: now, updated_at: now })
+    .eq('workspace_id', workspaceId).in('id', ids).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${workspaceId}/leads`);
+  return { notice: `${data.length} ${data.length === 1 ? 'lead' : 'leads'} suppressed. They will not be contacted again, on any channel.` };
 }

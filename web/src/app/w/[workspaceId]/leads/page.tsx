@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { requireWorkspace } from '@/lib/session';
+import { BulkBar } from './bulk-bar';
 import { scoreBand, LEAD_SOURCES, LEAD_STAGES, LINE_TYPE_LABELS, PAGE_SIZE, SOURCE_LABELS, STAGE_LABELS, VERIFICATION_LABELS, VERIFICATION_STATUSES, filtersToQuery, parseLeadFilters, type LeadSource, type LeadStage, type VerificationStatus } from '@/lib/campaigns';
 
 export const metadata: Metadata = { title: 'Leads' };
@@ -35,12 +36,14 @@ export default async function LeadsPage({
   if (f.campaign) query = query.eq('campaign_id', f.campaign);
   if (f.q) query = query.or(`full_name.ilike.*${f.q}*,email.ilike.*${f.q}*,phone.ilike.*${f.q}*,title.ilike.*${f.q}*`);
   const from = (f.page - 1) * PAGE_SIZE;
-  const [{ data, count }, { data: bySource }] = await Promise.all([
+  const [{ data, count }, { data: bySource }, { data: campaignRows }] = await Promise.all([
     (f.sort === 'score'
       ? query.order('score', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false })
       : query.order('created_at', { ascending: false })).range(from, from + PAGE_SIZE - 1),
     supabase.from('leads').select('source_channel').eq('workspace_id', workspace.id).limit(5000),
+    supabase.from('campaigns').select('id, name').eq('workspace_id', workspace.id).order('created_at', { ascending: false }).limit(50),
   ]);
+  const campaignList = (campaignRows ?? []) as { id: string; name: string }[];
   const leads = (data ?? []) as unknown as LeadRow[];
   const total = count ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -49,7 +52,7 @@ export default async function LeadsPage({
 
   return (
     <>
-      <h1>Leads</h1>
+      <div className="spread"><h1>Leads</h1><Link className="btn btn-secondary" href={`/w/${workspace.id}/leads/import`}>Import CSV</Link></div>
       <ul className="chips" aria-label="Leads by source">
         <li className={!f.source ? 'chip chip-on' : 'chip'}><Link href={`${base}${filtersToQuery(f, { source: null, page: 1 })}`}>All sources</Link></li>
         {LEAD_SOURCES.filter((s) => tally.has(s)).map((s) => (
@@ -101,17 +104,22 @@ export default async function LeadsPage({
         <section className="card stack">
           <h2>No leads here yet</h2>
           <p className="muted">Create a campaign and the lead sourcing agent will add leads from every connected source.</p>
-          <Link className="btn btn-primary" href={`/w/${workspace.id}/campaigns`}>Go to campaigns</Link>
+          <div className="row">
+            <Link className="btn btn-primary" href={`/w/${workspace.id}/campaigns`}>Go to campaigns</Link>
+            <Link className="btn btn-secondary" href={`/w/${workspace.id}/leads/import`}>Import a CSV</Link>
+          </div>
         </section>
       ) : (
+        <BulkBar workspaceId={workspace.id} campaigns={campaignList} canEdit={workspace.role !== 'viewer'}>
         <div className="table-wrap">
           <table className="table">
             <thead>
-              <tr><th scope="col">Score</th><th scope="col">Lead</th><th scope="col">Company</th><th scope="col">Contact</th><th scope="col">Source</th><th scope="col">Stage</th></tr>
+              <tr><th scope="col"><span className="sr-only">Select</span></th><th scope="col">Score</th><th scope="col">Lead</th><th scope="col">Company</th><th scope="col">Contact</th><th scope="col">Source</th><th scope="col">Stage</th></tr>
             </thead>
             <tbody>
               {leads.map((l) => (
                 <tr key={l.id}>
+                  <td><input type="checkbox" name="lead_id" value={l.id} aria-label={`Select ${l.full_name ?? l.email ?? 'lead'}`} /></td>
                   <td>{l.score === null ? <span className="badge">Not scored</span> : <span className={`badge badge-${({ ok: 'ok', warn: 'warn', low: 'error', none: '' } as const)[scoreBand(l.score)]}`}>{l.score}</span>}</td>
                   <td><Link href={`/w/${workspace.id}/leads/${l.id}`}>{l.full_name ?? l.companies?.name ?? 'Lead'}</Link>{l.title ? <><br /><span className="muted">{l.title}</span></> : null}</td>
                   <td>
@@ -135,6 +143,7 @@ export default async function LeadsPage({
             </tbody>
           </table>
         </div>
+        </BulkBar>
       )}
 
       {pages > 1 ? (
