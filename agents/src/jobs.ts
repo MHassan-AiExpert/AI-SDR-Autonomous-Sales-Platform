@@ -19,6 +19,7 @@ import { runReplySend as sendAnswers } from './answers.ts';
 import { runVoiceOutreach as callLeads, VoiceError } from './voice.ts';
 import { runTextOutreach as textLeads, TextError } from './texting.ts';
 import { runCloser as close } from './closer.ts';
+import { runAudits as audit } from './audit.ts';
 import type { Resolver } from './sources/website.ts';
 
 export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; scheduleHours?: number; appUrl?: string; webhookBaseUrl?: string; voiceModel?: string; pandadocPauseMs?: number };
@@ -224,16 +225,18 @@ export const runReplySend = (deps: Deps, job: Job) => withCampaign(deps, job, (c
 export const runVoiceOutreach = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => callLeads(deps, job, c));
 export const runTextOutreach = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => textLeads(deps, job, c));
 export const runAiCloser = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => close(deps, job, c));
+export const runAuditReports = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => audit(deps, job, c));
 
 const HANDLERS = {
   campaign_plan: runCampaignPlan, lead_sourcing: runLeadSourcing, enrichment: runEnrichment, research: runResearch,
   copywriting: runCopywriting, email_outreach: runEmailOutreach, reply_handling: runReplyHandling, reply_send: runReplySend, voice_outreach: runVoiceOutreach,
-  sms_outreach: runTextOutreach, ai_closer: runAiCloser,
+  sms_outreach: runTextOutreach, ai_closer: runAiCloser, audit_reports: runAuditReports,
 } as const;
 
 // After a job succeeds, the next stage of the pipeline starts by itself
-const NEXT_STAGE: Partial<Record<Job['type'], 'enrichment' | 'research' | 'copywriting' | 'email_outreach'>> = {
-  lead_sourcing: 'enrichment', enrichment: 'research', research: 'copywriting', copywriting: 'email_outreach',
+// With audits on, research is followed by the audit, then the emails that link to it
+const NEXT_STAGE: Partial<Record<Job['type'], 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'audit_reports'>> = {
+  lead_sourcing: 'enrichment', enrichment: 'research', research: 'copywriting', audit_reports: 'copywriting', copywriting: 'email_outreach',
 };
 
 /** Claims and runs up to `limit` jobs. Each job's failure is recorded on that job only. */
@@ -253,9 +256,11 @@ export async function runQueuedJobs(deps: Deps, limit: number) {
       const result = await HANDLERS[job.type](deps, job);
       await deps.store.finishJob(job.id, 'succeeded', result, null);
       await deps.store.runLogFinish(runLog, 'success', null);
-      const next = NEXT_STAGE[job.type];
-      // Outreach only follows on when the campaign's emails are live
-      const go = next && (next !== 'email_outreach' || (await deps.store.campaign(job.workspace_id, job.campaign_id))?.outreach_status === 'live');
+      let next = NEXT_STAGE[job.type];
+      const fresh = next ? await deps.store.campaign(job.workspace_id, job.campaign_id) : null;
+      if (job.type === 'research' && fresh?.audit_enabled) next = 'audit_reports';
+      // An audit run that only sent alerts does not start writing; outreach only follows when emails are live
+      const go = next && !(job.type === 'audit_reports' && !fresh?.audit_enabled) && (next !== 'email_outreach' || fresh?.outreach_status === 'live');
       if (next && go) await deps.store.enqueue(job.workspace_id, job.campaign_id, next).catch(() => false);
       outcomes.push({ id: job.id, type: job.type, status: 'succeeded' });
       log('info', 'job succeeded', { job: job.id, type: job.type, workspace_id: job.workspace_id, correlation_id: job.correlation_id, ms: Date.now() - started });

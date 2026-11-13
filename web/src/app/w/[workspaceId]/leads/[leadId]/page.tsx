@@ -57,6 +57,11 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
     .eq('lead_id', lead.id)
     .order('created_at', { ascending: false })
     .limit(20);
+  const { data: auditRows } = await supabase
+    .from('assets')
+    .select('id, status, score, web_url, views, seconds_viewed, first_viewed_at, last_viewed_at, error, created_at')
+    .eq('workspace_id', workspace.id).eq('lead_id', lead.id).eq('type', 'audit')
+    .order('created_at', { ascending: false }).limit(3);
   const { data: texts } = await supabase
     .from('messages')
     .select('id, created_at, channel, direction, body, delivery_status, error, step')
@@ -187,6 +192,23 @@ export default async function LeadPage({ params }: { params: Promise<{ workspace
               <p className="muted">{k.duration_seconds ? `${Math.round(k.duration_seconds / 6) / 10} min` : ''}{rec ? <> · <a href={rec} target="_blank" rel="noopener noreferrer">Recording</a></> : null}</p>
               {k.transcript ? <details><summary>Transcript</summary><p className="pre">{k.transcript}</p></details> : null}
             </article>
+          );
+        })}
+      </section>
+
+      <section className="card stack" aria-labelledby="audit">
+        <h2 id="audit">Website audit</h2>
+        {!auditRows?.length ? <p className="muted">No audit yet.</p> : auditRows.map((a) => {
+          const link = a.web_url && /^https?:\/\/[^\s]+\/a\/[0-9a-f]{48}$/.test(a.web_url) ? a.web_url : null;
+          return (
+            <div key={a.id} className="stack">
+              {a.status === 'ready' ? (
+                <>
+                  <p><strong>Score {a.score}/100</strong>{link ? <> · <a href={link} target="_blank" rel="noopener noreferrer">Open the audit</a></> : null}</p>
+                  <p className="muted">{a.first_viewed_at ? `Opened ${a.views} ${a.views === 1 ? 'time' : 'times'}, ${Math.round(a.seconds_viewed / 6) / 10} min in total. First opened ${new Date(a.first_viewed_at).toUTCString()}.` : 'Not opened yet.'} Opening it yourself while signed in is not counted.</p>
+                </>
+              ) : <p className="muted">No audit: {a.error ?? 'the website could not be read'}.</p>}
+            </div>
           );
         })}
       </section>

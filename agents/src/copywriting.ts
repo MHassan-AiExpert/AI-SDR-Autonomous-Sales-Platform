@@ -9,6 +9,7 @@ import { mapLimit } from './enrichment.ts';
 import type { Deps } from './jobs.ts';
 import type { Campaign, Job } from './store.ts';
 import { log } from './log.ts';
+import { auditLine } from './audit.ts';
 
 export const COPY_LIMITS = { leads: 25, concurrency: 3 };
 
@@ -110,7 +111,7 @@ export async function runCopywriting(deps: Deps, job: Job, campaign: Campaign) {
   const approval = (await store.workspaceMode(ws)) === 'approval' || campaign.mode === 'approval';
   const count = 1 + campaign.follow_up_count;
   const playbook = await store.activePlaybook(ws);
-  const leads = await store.leadsToWrite(ws, campaign.id, campaign.score_threshold, COPY_LIMITS.leads);
+  const leads = await store.leadsToWrite(ws, campaign.id, campaign.score_threshold, COPY_LIMITS.leads, campaign.audit_enabled);
   const stats = { leads_written: 0, emails_written: 0, failed: 0, waiting_for_approval: approval, provider: null as string | null };
 
   await mapLimit(leads, COPY_LIMITS.concurrency, async (lead) => {
@@ -121,6 +122,10 @@ export async function runCopywriting(deps: Deps, job: Job, campaign: Campaign) {
           schemaName: 'email_sequence', schema: COPY_JSON_SCHEMA(count), webSearch: false,
         }),
         (raw) => validateSequence(raw, count), { job: job.id, lead: lead.id });
+      // The audit link is added by the system, after the checks on the AI's text
+      if (lead.audit_token && deps.appUrl && /^[0-9a-f]{48}$/.test(lead.audit_token)) {
+        value[0] = { ...value[0], body: `${value[0].body}\n\n${auditLine(lead.company_name, `${deps.appUrl}/a/${lead.audit_token}`)}` };
+      }
       const saved = await store.saveDrafts(ws, campaign.id, lead.id, value, approval ? 'draft' : 'approved');
       if (saved) {
         stats.leads_written++;

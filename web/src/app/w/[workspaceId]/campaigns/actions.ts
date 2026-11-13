@@ -72,6 +72,7 @@ export async function queueAgentJob(_prev: FormState, form: FormData): Promise<F
     voice_outreach: 'The AI caller will start calls within a minute, if it is inside calling hours.',
     sms_outreach: 'Text follow-ups will go out within a minute, if it is inside contact hours.',
     ai_closer: 'The AI closer will check for meetings starting now and proposals to send within a minute.',
+    audit_reports: 'The audit agent will audit new qualified leads within a minute.',
   };
   return { notice: notices[type] };
 }
@@ -389,4 +390,19 @@ export async function setReceptionistStatus(_prev: FormState, form: FormData): P
   if (!data?.length) return { error: NO_PERMISSION };
   revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
   return { notice: status === 'live' ? 'The AI receptionist answers your calls from now on.' : 'Receptionist off. Calls go to your team number.' };
+}
+
+export async function setAuditEnabled(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  const enabled = form.get('enabled') === 'true';
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  const { supabase, user } = await requireUser();
+  const { data, error } = await supabase.from('campaigns').update({ audit_enabled: enabled, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data).eq('id', campaignId.data).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  if (enabled) await supabase.from('agent_jobs').insert({ workspace_id: ws.data, campaign_id: campaignId.data, type: 'audit_reports', requested_by: user.id });
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
+  return { notice: enabled ? 'Audits are on. Qualified leads get their audit within a minute, and emails link to it.' : 'Audits are off. New emails are written without an audit.' };
 }

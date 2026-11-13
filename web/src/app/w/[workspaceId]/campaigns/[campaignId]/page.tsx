@@ -13,6 +13,7 @@ import { TextSection, type TextCampaign } from './text-section';
 import { CloserSection } from './closer-section';
 import { ReceptionistSection, type ReceptionistCampaign } from './receptionist-section';
 import { vapiServerUrl } from '@/lib/receptionist';
+import { AuditSection } from './audit-section';
 import { readPlaybook } from '@/lib/closer';
 
 export const metadata: Metadata = { title: 'Campaign' };
@@ -27,14 +28,14 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
 
   const { data: campaign } = await supabase
     .from('campaigns')
-    .select('id, name, niche, offer, status, target_areas, daily_lead_limit, score_threshold, icp, source_plan, created_at, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start, send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state, auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start, call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at, sms_status, sms_channel, sms_from, whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages, vapi_closer_assistant_id, receptionist_status, vapi_receptionist_assistant_id, vapi_inbound_number_id, receptionist_transfer_number, receptionist_notes')
+    .select('id, name, niche, offer, status, target_areas, daily_lead_limit, score_threshold, icp, source_plan, created_at, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start, send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state, auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start, call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at, sms_status, sms_channel, sms_from, whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages, vapi_closer_assistant_id, receptionist_status, vapi_receptionist_assistant_id, vapi_inbound_number_id, receptionist_transfer_number, receptionist_notes, audit_enabled')
     .eq('workspace_id', workspace.id)
     .eq('id', campaignId)
     .maybeSingle();
   if (!campaign) notFound();
 
   const emailCount = (status: string) => supabase.from('emails').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).eq('status', status);
-  const [{ data: jobs }, { count: leadCount }, { count: verified }, { count: awaiting }, { count: qualified }, { count: drafts }, { count: approvedEmails }, { count: queuedEmails }, { data: instantly }, { data: vapi }, { count: callsToday }, { data: twilio }, { count: textsToday }, { data: payTools }, { data: playbookRow }, { data: hook }, { data: calendly }] = await Promise.all([
+  const [{ data: jobs }, { count: leadCount }, { count: verified }, { count: awaiting }, { count: qualified }, { count: drafts }, { count: approvedEmails }, { count: queuedEmails }, { data: instantly }, { data: vapi }, { count: callsToday }, { data: twilio }, { count: textsToday }, { data: payTools }, { data: playbookRow }, { data: hook }, { data: calendly }, { count: auditsReady }, { count: auditsOpened }] = await Promise.all([
     supabase.from('agent_jobs').select('id, type, status, result, error, created_at, finished_at')
       .eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).order('created_at', { ascending: false }).limit(20),
     supabase.from('leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id),
@@ -52,6 +53,8 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
     // The webhook address is a secret; only owners and admins see it
     manage ? supabase.from('workspaces').select('webhook_token').eq('id', workspace.id).maybeSingle() : Promise.resolve({ data: null }),
     supabase.from('integrations').select('status').eq('workspace_id', workspace.id).eq('tool', 'calendly').maybeSingle(),
+    supabase.from('assets').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).eq('type', 'audit').eq('status', 'ready'),
+    supabase.from('assets').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('campaign_id', campaign.id).eq('type', 'audit').not('first_viewed_at', 'is', null),
   ]);
   const hookBase = process.env.NEXT_PUBLIC_WEBHOOK_BASE_URL;
   const serverUrl = vapiServerUrl(hookBase, (hook as { webhook_token?: string } | null)?.webhook_token ?? null);
@@ -134,6 +137,8 @@ export default async function CampaignPage({ params }: { params: Promise<{ works
         emailChannelOn={workspace.enabled_channels?.email !== false}
         domainsReady={checklist.sending_domains === true && checklist.mailbox_warmup === true}
       />
+
+      <AuditSection workspaceId={workspace.id} campaignId={campaign.id} enabled={campaign.audit_enabled} manage={manage} stats={{ ready: auditsReady ?? 0, opened: auditsOpened ?? 0 }} />
 
       <VoiceSection
         workspaceId={workspace.id}

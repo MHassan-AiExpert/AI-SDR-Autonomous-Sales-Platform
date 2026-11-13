@@ -26,5 +26,6 @@ Every feature of the platform ships with three documents:
 | [F12](F12-sms-whatsapp-follow-ups/feature-report.md) | SMS and WhatsApp follow-ups: consent per channel, contact hours and limits, AI-written texts with sender and opt-out, two-way replies, STOP handling, delivery tracking | M3, M7, M8, M13, M17, M21 | 43 passed + 2 live checks |
 | [F13](F13-ai-closer/feature-report.md) | AI closer: playbook-led meeting calls, plan and price from the playbook, Stripe payment links, PandaDoc proposals, payments win the deal, handoffs to the team | M11, M15, M18, M19, M20, M21 | 43 passed + 2 live checks |
 | [F14](F14-ai-receptionist/feature-report.md) | Inbound AI receptionist: per-call setup from notes and playbook, transfers to the team, booking links by text with consent, callers become leads | M3, M8, M11, M14, M15 | 36 passed + 2 live checks |
+| [F15](F15-website-audits/feature-report.md) | Website and marketing audits: 13 checks measured in code, AI recommendations for failed checks, private tracked page, first email links to it, opens alert the team | M6, M11, M15, M16 | 36 passed + 2 live checks |
 
 Run the infrastructure and database tests with `npm test`, the agent service tests with `cd agents && npm test`, and the web app tests with `cd web && npm test`.

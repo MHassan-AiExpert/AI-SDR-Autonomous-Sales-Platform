@@ -24,7 +24,7 @@ export type Job = {
   id: string;
   workspace_id: string;
   campaign_id: string;
-  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer';
+  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports';
   attempts: number;
   correlation_id: string;
 };
@@ -77,6 +77,7 @@ export type Campaign = {
   sms_daily_limit: number;
   sms_max_messages: number;
   vapi_closer_assistant_id: string | null;
+  audit_enabled: boolean;
 };
 
 export type ReceptionistCampaign = {
@@ -106,7 +107,7 @@ export class Store {
              send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state,
              auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start,
              call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at, sms_status, sms_channel, sms_from,
-             whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages, vapi_closer_assistant_id
+             whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages, vapi_closer_assistant_id, audit_enabled
       from campaigns where workspace_id = ${workspaceId}::uuid and id = ${campaignId}::uuid`;
     if (!rows.length) return null;
     const c = rows[0] as unknown as Campaign;
@@ -271,7 +272,7 @@ export class Store {
     return Number(rows[0].n);
   }
 
-  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer'): Promise<boolean> {
+  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports'): Promise<boolean> {
     const rows = await this.sql`select agent_job_enqueue(${workspaceId}::uuid, ${campaignId}::uuid, ${type}) as ok`;
     return rows[0].ok === true;
   }
@@ -417,9 +418,11 @@ export class Store {
   }
 
   /** Qualified, verified, uncontacted leads that have no emails in this campaign yet. */
-  async leadsToWrite(workspaceId: string, campaignId: string, threshold: number, limit: number) {
+  async leadsToWrite(workspaceId: string, campaignId: string, threshold: number, limit: number, waitForAudit = false) {
     return (await this.sql`
-      select l.id, l.full_name, l.title, l.email, coalesce(c.name, 'your company') as company_name, l.ai_report
+      select l.id, l.full_name, l.title, l.email, coalesce(c.name, 'your company') as company_name, l.ai_report,
+             (select a.share_token from assets a where a.workspace_id = l.workspace_id and a.lead_id = l.id and a.campaign_id = ${campaignId}::uuid
+                and a.type = 'audit' and a.status = 'ready' and a.expires_at > now() + interval '30 days') as audit_token
       from leads l
       left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
       where l.workspace_id = ${workspaceId}::uuid and l.campaign_id = ${campaignId}::uuid
@@ -427,8 +430,11 @@ export class Store {
         and l.score >= ${threshold} and l.researched_at is not null
         and not app.is_suppressed(l.workspace_id, l.email, l.phone)
         and not exists (select 1 from emails e where e.workspace_id = l.workspace_id and e.lead_id = l.id and e.campaign_id = ${campaignId}::uuid)
+        -- With audits on, a lead is written to once its audit has been tried
+        and (not ${waitForAudit} or exists (select 1 from assets a where a.workspace_id = l.workspace_id and a.lead_id = l.id
+                                              and a.campaign_id = ${campaignId}::uuid and a.type = 'audit'))
       order by l.score desc, l.created_at
-      limit ${limit}`) as unknown as { id: string; full_name: string | null; title: string | null; email: string; company_name: string; ai_report: Record<string, unknown> | null }[];
+      limit ${limit}`) as unknown as { id: string; full_name: string | null; title: string | null; email: string; company_name: string; ai_report: Record<string, unknown> | null; audit_token: string | null }[];
   }
 
   async saveDrafts(workspaceId: string, campaignId: string, leadId: string, drafts: { subject: string; body: string }[], status: 'draft' | 'approved'): Promise<boolean> {
@@ -1322,6 +1328,52 @@ export class Store {
       await tx`insert into follow_ups (workspace_id, lead_id, channel, due_at) values (${workspaceId}::uuid, ${leadId}::uuid, ${channel}, now())`;
       await tx`insert into activities (workspace_id, lead_id, type, channel, summary, actor) values (${workspaceId}::uuid, ${leadId}::uuid, 'task', ${channel}, ${summary.slice(0, 500)}, 'system')`;
     });
+  }
+
+  // ---------------------------------------------------------------- audits
+
+  /** Qualified, researched leads in this campaign with no audit yet. */
+  async leadsToAudit(workspaceId: string, campaignId: string, threshold: number, limit: number) {
+    return (await this.sql`
+      select l.id, l.full_name, c.name as company_name, c.domain, c.google_rating, c.google_reviews, l.ai_report
+      from leads l
+      left join companies c on c.workspace_id = l.workspace_id and c.id = l.company_id
+      where l.workspace_id = ${workspaceId}::uuid and l.campaign_id = ${campaignId}::uuid
+        and l.stage in ('new', 'contacted') and l.score >= ${threshold} and l.researched_at is not null
+        and not exists (select 1 from assets a where a.workspace_id = l.workspace_id and a.lead_id = l.id and a.campaign_id = ${campaignId}::uuid and a.type = 'audit')
+      order by l.score desc, l.created_at
+      limit ${limit}`) as unknown as import('./audit.ts').AuditLead[];
+  }
+
+  async saveAudit(workspaceId: string, campaignId: string, leadId: string, a: {
+    status: 'ready' | 'no_website' | 'failed'; title: string; score: number | null; content: Record<string, unknown>; token: string | null; webUrl: string | null; error: string | null;
+  }): Promise<string | null> {
+    return this.sql.begin(async (tx) => {
+      const rows = await tx`
+        insert into assets (workspace_id, lead_id, campaign_id, type, status, title, score, content, share_token, web_url, error)
+        values (${workspaceId}::uuid, ${leadId}::uuid, ${campaignId}::uuid, 'audit', ${a.status}, ${a.title.slice(0, 200)}, ${a.score},
+                ${tx.json(a.content as postgres.JSONValue)}, ${a.token}, ${a.webUrl}, ${a.error?.slice(0, 400) ?? null})
+        on conflict (workspace_id, campaign_id, lead_id) where type = 'audit' do nothing
+        returning id`;
+      if (!rows.length) return null;
+      if (a.status === 'ready') {
+        await tx`
+          insert into activities (workspace_id, lead_id, type, channel, summary, actor, record_table, record_id)
+          values (${workspaceId}::uuid, ${leadId}::uuid, 'note', null, ${`Website audit ready: score ${a.score}/100`}, 'ai', 'assets', ${rows[0].id}::uuid)`;
+      }
+      return rows[0].id as string;
+    });
+  }
+
+  /** Audits opened since the last alert. */
+  async auditsToAlert(workspaceId: string, campaignId: string) {
+    return (await this.sql`
+      update assets a set alerted_at = now()
+      from leads l
+      where a.workspace_id = ${workspaceId}::uuid and a.campaign_id = ${campaignId}::uuid and a.type = 'audit'
+        and a.first_viewed_at is not null and a.alerted_at is null
+        and l.workspace_id = a.workspace_id and l.id = a.lead_id
+      returning a.lead_id, a.score, coalesce(l.full_name, l.email, l.phone, 'A lead') as name`) as unknown as { lead_id: string; score: number | null; name: string }[];
   }
 
   async slackChannel(workspaceId: string): Promise<string | null> {

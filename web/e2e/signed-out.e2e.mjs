@@ -32,6 +32,16 @@ await check('E2E-01', 'Landing page offers sign-up and sign-in', async () => {
   assert.equal(await page.getByRole('link', { name: 'Sign in' }).getAttribute('href'), '/login');
 });
 
+await check('E2E-17', 'A shared audit link that does not exist shows the not-found page without asking to sign in', async () => {
+  for (const token of ['0'.repeat(48), 'not-a-token']) {
+    const res = await page.goto(`${BASE}/a/${token}`);
+    assert.equal(res.status(), 404);
+    assert.equal(new URL(page.url()).pathname, `/a/${token}`);
+  }
+  const ping = await page.request.post(`${BASE}/a/${'0'.repeat(48)}/view`, { data: { seconds: 0 } });
+  assert.equal(ping.status(), 204);
+});
+
 await check('E2E-02', 'Workspace list redirects signed-out visitors to sign-in', async () => {
   await page.goto(`${BASE}/workspaces`);
   assert.equal(new URL(page.url()).pathname, '/login');

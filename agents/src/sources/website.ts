@@ -37,7 +37,7 @@ export async function assertPublicUrl(url: URL, resolve: Resolver): Promise<void
 
 const MAX_BYTES = 1_000_000;
 
-async function fetchPage(start: URL, fetchImpl: Fetch, resolve: Resolver): Promise<string | null> {
+async function fetchPageAt(start: URL, fetchImpl: Fetch, resolve: Resolver): Promise<{ html: string; url: URL } | null> {
   let url = start;
   for (let hop = 0; hop < 4; hop++) {
     await assertPublicUrl(url, resolve);
@@ -54,7 +54,25 @@ async function fetchPage(start: URL, fetchImpl: Fetch, resolve: Resolver): Promi
     }
     if (!res.ok || !(res.headers.get('content-type') ?? '').includes('text/html')) return null;
     const text = await res.text();
-    return text.slice(0, MAX_BYTES);
+    return { html: text.slice(0, MAX_BYTES), url };
+  }
+  return null;
+}
+
+async function fetchPage(start: URL, fetchImpl: Fetch, resolve: Resolver): Promise<string | null> {
+  return (await fetchPageAt(start, fetchImpl, resolve))?.html ?? null;
+}
+
+/** The home page as a visitor gets it, with the address it ended on and how long it took. */
+export async function fetchHomePage(domain: string, fetchImpl: Fetch = fetch, resolve: Resolver = defaultResolver, now: () => number = Date.now): Promise<{ html: string; url: string; ms: number; bytes: number } | null> {
+  for (const scheme of ['https', 'http']) {
+    const started = now();
+    try {
+      const page = await fetchPageAt(new URL(`${scheme}://${domain}/`), fetchImpl, resolve);
+      if (page) return { html: page.html, url: page.url.toString(), ms: Math.max(0, now() - started), bytes: Buffer.byteLength(page.html) };
+    } catch {
+      /* try the next scheme */
+    }
   }
   return null;
 }

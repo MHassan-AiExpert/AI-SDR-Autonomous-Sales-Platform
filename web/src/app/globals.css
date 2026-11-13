@@ -162,3 +162,12 @@ fieldset.row { border: 0; padding: 0; margin: 0; flex-wrap: wrap; }
 input[type='time'] { padding: 10px 12px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
 blockquote { margin: 0; padding: 10px 14px; border-left: 3px solid var(--border); background: var(--bg); border-radius: 6px; }
 code.pre { display: block; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+
+/* Shared audit page */
+.audit { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; display: flex; flex-direction: column; gap: 20px; }
+.audit-score { font-size: 3rem; line-height: 1; margin: 0; }
+.audit-score span { font-size: 1.25rem; color: var(--muted, #6b7280); }
+.audit-good strong { color: #15803d; }
+.audit-fair strong { color: #b45309; }
+.audit-poor strong { color: #b91c1c; }
+.audit ol { padding-left: 1.25rem; }
