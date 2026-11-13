@@ -5,7 +5,7 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 | | |
 | --- | --- |
 | Feature ID | F13 |
-| SRS reference | M18 (AI closer: runs booked meetings from the playbook), M19 (proposals and e-signature), M20 (payments and won deals), M15 (pipeline and tasks), M11 (alerts), M21 (kill switch), compliance section (AI disclosure, no card details by phone) |
+| SRS reference | M18 (AI closer: runs booked meetings from the playbook), M19 (company playbook), M20 (deal closing: proposals, e-signature, payments and won deals), M15 (pipeline and tasks), M11 (alerts), M21 (kill switch), compliance section (AI disclosure, no card details by phone) |
 | Location | `agents/src/closer.ts`, `agents/src/sources/stripe.ts`, `agents/src/sources/pandadoc.ts`, `agents/src/voice.ts`, `agents/src/booking.ts`, `infra/n8n/workflows/stripe-events.json`, `supabase/migrations/20261112234604_ai_closer.sql`, `web/src/lib/closer.ts`, `web/src/app/w/[workspaceId]/playbook/`, `web/src/app/w/[workspaceId]/deals/`, `web/src/app/w/[workspaceId]/campaigns/[campaignId]/closer-section.tsx` |
 | Automated tests | 5 database, 1 infrastructure, 16 agent service, 5 web unit, 16 browser: 43 passed, 0 failed |
 | Live checks | New columns, guard trigger, private Stripe endpoint table, publish function, closer scheduling and kill switch rule verified on the hosted database |

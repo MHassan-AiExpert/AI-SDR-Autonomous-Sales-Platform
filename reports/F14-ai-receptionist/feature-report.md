@@ -5,7 +5,7 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 | | |
 | --- | --- |
 | Feature ID | F14 |
-| SRS reference | M14 (inbound AI receptionist), M8 (booking), M15 (leads, timeline and tasks), M11 (alerts), M3 FR-3.7 (consent recorded per channel), compliance section (AI disclosure, opt-out, no payment details by phone) |
+| SRS reference | M25 (inbound AI receptionist), M8 (booking), M15 (leads, timeline and tasks), M11 (alerts), M3 FR-3.7 (consent recorded per channel), compliance section (AI disclosure, opt-out, no payment details by phone) |
 | Location | `agents/src/receptionist.ts`, `agents/src/voice.ts`, `agents/src/sources/vapi.ts`, `agents/src/server.ts`, `infra/n8n/workflows/vapi-events.json`, `supabase/migrations/20261113000645_ai_receptionist.sql`, `web/src/lib/receptionist.ts`, `web/src/app/w/[workspaceId]/campaigns/[campaignId]/receptionist-section.tsx` |
 | Automated tests | 3 database, 1 infrastructure, 12 agent service, 4 web unit, 16 browser: 36 passed, 0 failed |
 | Live checks | New campaign columns, one-campaign-per-number rule and the new call outcomes verified on the hosted database |

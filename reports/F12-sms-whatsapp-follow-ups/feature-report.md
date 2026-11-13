@@ -5,7 +5,7 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 | | |
 | --- | --- |
 | Feature ID | F12 |
-| SRS reference | M13 (SMS outreach), M17 (WhatsApp outreach), M8 (two-way text conversations), M7 (reply handling), M3 FR-3.7 (consent per channel), M21 (kill switch), compliance section (TCPA, A2P 10DLC, WhatsApp opt-in and templates) |
+| SRS reference | M13 (SMS outreach), M17 (WhatsApp outreach), M7 (reply handling, including two-way text conversations), M6 (multi-channel sequencing), M3 FR-3.7 (consent per channel), M21 (kill switch), compliance section (TCPA, A2P 10DLC, WhatsApp opt-in and templates) |
 | Location | `agents/src/texting.ts`, `agents/src/sources/twilio.ts`, `agents/src/replies.ts`, `agents/src/answers.ts`, `agents/src/server.ts`, `infra/n8n/workflows/twilio-events.json`, `supabase/migrations/20261112232645_sms_whatsapp.sql`, `web/src/lib/texting.ts`, `web/src/app/w/[workspaceId]/campaigns/[campaignId]/text-section.tsx`, `web/src/app/w/[workspaceId]/texts/` |
 | Automated tests | 4 database, 1 infrastructure, 17 agent service, 5 web unit, 16 browser: 43 passed, 0 failed |
 | Live checks | New columns, guard trigger, hourly scheduling and kill switch rule verified on the hosted database |

@@ -5,7 +5,7 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 | | |
 | --- | --- |
 | Feature ID | F15 |
-| SRS reference | M16 (personalised audit reports shared as tracked pages), M6 (personalised outreach), M15 (timeline and stages), M11 (alerts) |
+| SRS reference | M16 (personalised audit reports shared as tracked pages), M5 (personalisation), M15 (timeline and stages), M11 (alerts) |
 | Location | `agents/src/audit.ts`, `agents/src/sources/website.ts`, `agents/src/copywriting.ts`, `agents/src/jobs.ts`, `supabase/migrations/20261113001928_website_audits.sql`, `supabase/migrations/20261113002305_website_audits_manual_links.sql`, `web/src/app/a/[token]/`, `web/src/lib/audit.ts`, `web/src/app/w/[workspaceId]/campaigns/[campaignId]/audit-section.tsx` |
 | Automated tests | 4 database, 12 agent service, 3 web unit, 17 browser: 36 passed, 0 failed |
 | Live checks | New columns, guard trigger, the two shared-page functions and their permissions verified on the hosted database |
