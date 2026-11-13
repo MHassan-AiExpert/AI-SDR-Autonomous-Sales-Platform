@@ -42,7 +42,7 @@ export async function runEmailOutreach(deps: Deps, job: Job, campaign: Campaign)
   try {
     if (!instantlyId) {
       instantlyId = await createCampaign(key, {
-        name: `${campaign.name} (AI SDR)`, accounts, timezone: campaign.send_timezone, from: campaign.send_window_start,
+        name: `${campaign.name} (${(await store.brandName(ws)) ?? 'AI SDR'})`.slice(0, 200), accounts, timezone: campaign.send_timezone, from: campaign.send_window_start,
         to: campaign.send_window_end, days: campaign.send_days, dailyLimit: campaign.daily_send_limit,
         steps: 1 + campaign.follow_up_count, delayDays: campaign.follow_up_delay_days,
       }, deps.fetchImpl);

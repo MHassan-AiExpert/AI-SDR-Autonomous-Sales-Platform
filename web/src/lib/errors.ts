@@ -17,6 +17,7 @@ export function friendlyDbError(error: ErrorLike, fallback = 'Something went wro
         : 'That already exists.';
     case '23514':
       if (error.message === 'Invalid credentials') return 'Those credentials are not valid.';
+      if (error.message?.startsWith('This plan allows') || error.message === 'That person already owns the agency') return error.message;
       return error.message?.includes('at least one owner')
         ? 'A workspace must keep at least one owner.'
         : 'That value is not allowed.';

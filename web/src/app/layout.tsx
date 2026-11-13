@@ -1,16 +1,22 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import './globals.css';
+import { brandStyle, hostBrand } from '@/lib/brand';
 
-export const metadata: Metadata = {
-  title: { default: 'AI SDR Platform', template: '%s · AI SDR Platform' },
-  description: 'Autonomous AI sales development: find leads, run outreach on every channel, book meetings and close deals.',
-};
+// On an agency's own domain every title carries the agency's app name
+export async function generateMetadata(): Promise<Metadata> {
+  const brand = await hostBrand();
+  return {
+    title: { default: brand.app_name, template: `%s · ${brand.app_name}` },
+    description: 'Autonomous AI sales development: find leads, run outreach on every channel, book meetings and close deals.',
+  };
+}
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const brand = await hostBrand();
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body style={brandStyle(brand)}>{children}</body>
     </html>
   );
 }

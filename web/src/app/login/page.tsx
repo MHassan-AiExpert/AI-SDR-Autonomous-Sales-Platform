@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { BrandMark } from '@/components/brand-mark';
+import { hostBrand } from '@/lib/brand';
 import Link from 'next/link';
 import { ActionForm, SubmitButton } from '@/components/action-form';
 import { safeNextPath } from '@/lib/validation';
@@ -7,10 +9,11 @@ import { signIn } from '../auth/actions';
 export const metadata: Metadata = { title: 'Sign in' };
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; status?: string }> }) {
+  const brand = await hostBrand();
   const { next, status } = await searchParams;
   return (
     <main className="auth">
-      <p className="brand">AI SDR Platform</p>
+      <BrandMark brand={brand} as="p" />
       <h1>Sign in</h1>
       {status === 'link-invalid' ? (
         <p className="form-message form-error" role="alert">That link is invalid or has expired. Sign in or request a new one.</p>

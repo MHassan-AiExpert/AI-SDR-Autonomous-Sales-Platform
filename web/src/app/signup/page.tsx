@@ -1,14 +1,17 @@
 import type { Metadata } from 'next';
+import { BrandMark } from '@/components/brand-mark';
+import { hostBrand } from '@/lib/brand';
 import Link from 'next/link';
 import { ActionForm, SubmitButton } from '@/components/action-form';
 import { signUp } from '../auth/actions';
 
 export const metadata: Metadata = { title: 'Create account' };
 
-export default function SignupPage() {
+export default async function SignupPage() {
+  const brand = await hostBrand();
   return (
     <main className="auth">
-      <p className="brand">AI SDR Platform</p>
+      <BrandMark brand={brand} as="p" />
       <h1>Create your account</h1>
       <ActionForm action={signUp} className="card stack">
         <label className="field">

@@ -4,6 +4,8 @@ import { ActionForm, SubmitButton } from '@/components/action-form';
 import { ROLE_LABELS, isRole } from '@/lib/roles';
 import { requireUser } from '@/lib/session';
 import { createWorkspace } from './actions';
+import { BrandMark } from '@/components/brand-mark';
+import { hostBrand } from '@/lib/brand';
 
 export const metadata: Metadata = { title: 'Workspaces' };
 
@@ -11,6 +13,7 @@ type Row = { role: string; workspaces: { id: string; name: string; outreach_paus
 
 export default async function WorkspacesPage() {
   const { supabase, user } = await requireUser();
+  const brand = await hostBrand();
   const { data } = await supabase
     .from('workspace_members')
     .select('role, workspaces (id, name, outreach_paused, automation_mode)')
@@ -21,8 +24,9 @@ export default async function WorkspacesPage() {
   return (
     <div className="shell">
       <header className="topbar">
-        <span className="brand">AI SDR Platform</span>
+        <BrandMark brand={brand} />
         <div className="row">
+          <Link href="/agency">Agencies</Link>
           <span className="muted">{user.email}</span>
           <form action="/auth/signout" method="post"><button className="btn btn-ghost" type="submit">Sign out</button></form>
         </div>

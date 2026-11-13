@@ -178,6 +178,19 @@ describe('lead sourcing job', () => {
     expect((await job(id)).result).toMatchObject({ added: 0, note: 'The daily lead limit for this campaign is already reached' });
   });
 
+  test('PIPE-15 a client plan caps the leads added each month across campaigns', async () => {
+    await t.db.query(`delete from leads where workspace_id = $1`, [t.wsA]);
+    await t.db.query(`update workspaces set monthly_lead_limit = 2 where id = $1`, [t.wsA]);
+    const c = await campaign(t.wsA, { name: 'Plan capped', daily_lead_limit: 10 });
+    await queue(t.wsA, c, 'lead_sourcing');
+    await run(deps(), 5);
+    expect(await leadsOf(c)).toHaveLength(2);
+    const id = await queue(t.wsA, c, 'lead_sourcing');
+    await run(deps(), 5);
+    expect((await job(id)).result).toMatchObject({ added: 0, note: 'The monthly lead limit of your plan is reached. Ask your agency to raise it.' });
+    await t.db.query(`update workspaces set monthly_lead_limit = null where id = $1`, [t.wsA]);
+  });
+
   test('PIPE-08 one source failing keeps the others running and flags that tool', async () => {
     await t.db.query(`delete from leads where workspace_id = $1`, [t.wsA]);
     const c = await campaign(t.wsA, { name: 'Apify down' });

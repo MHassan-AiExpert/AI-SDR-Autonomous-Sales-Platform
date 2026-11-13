@@ -31,5 +31,6 @@ Every feature of the platform ships with three documents:
 | [F17](F17-analytics-dashboard/feature-report.md) | Reporting and analytics: funnel with step rates, daily chart, channel and campaign results, revenue, cost per meeting, safe CSV export | M10, M20, M23 | 26 passed + 2 live checks |
 | [F18](F18-crm-sync/feature-report.md) | CRM sync with HubSpot: contacts by email with lead status, deals in a chosen pipeline, activity notes, wins and losses read back, only changes sent | M9, M20, M23 | 41 passed + 2 live checks |
 | [F19](F19-monitoring-notifications/feature-report.md) | Monitoring, alerts and notifications: in-app notification centre, Slack events and quiet hours, one-click handoffs, retries with backoff, automatic email pausing on bounce or opt-out spikes, tool and credit alerts, daily summary, readiness endpoint | M11, M22, FR-23.4, 10.4, 10.6 | 46 passed + 2 live checks |
+| [F20](F20-white-label/feature-report.md) | White-label mode: agency brand on custom domains and in client workspaces, agency console with client plans, limits and usage, CSV usage export, default playbook and cadence, isolation through workspace roles | M26, 10.1 | 34 passed + 2 live checks |
 
 Run the infrastructure and database tests with `npm test`, the agent service tests with `cd agents && npm test`, and the web app tests with `cd web && npm test`.

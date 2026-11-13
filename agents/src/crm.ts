@@ -90,20 +90,20 @@ const CLASS: Record<string, string> = {
   out_of_office: 'out of office', wrong_person: 'wrong person', unsubscribe: 'asked to stop', negative: 'not interested',
 };
 
-export function noteBody(a: CrmActivity): string {
+export function noteBody(a: CrmActivity, brand = 'the AI SDR platform'): string {
   const d = a.detail;
   const t = (v: unknown, n = 500) => noteEscape(String(v ?? '').trim().slice(0, n));
   if (a.kind === 'reply') {
     const head = `<strong>Reply by ${t(d.channel, 20)}</strong>${d.classification ? ` (${t(CLASS[String(d.classification)] ?? d.classification, 40)})` : ''}`;
-    return `${head}<br>${t(d.body, 1500)}<br><em>Logged by the AI SDR platform</em>`;
+    return `${head}<br>${t(d.body, 1500)}<br><em>Logged by ${noteEscape(brand)}</em>`;
   }
   if (a.kind === 'meeting') {
     return `<strong>Meeting ${t(d.status, 20)}</strong> for ${t(a.at.toISOString().replace('T', ' ').slice(0, 16), 20)} UTC` +
-      `${d.run_by === 'ai_closer' ? ', run by the AI closer' : ''}${d.outcome ? `<br>Outcome: ${t(d.outcome)}` : ''}<br><em>Logged by the AI SDR platform</em>`;
+      `${d.run_by === 'ai_closer' ? ', run by the AI closer' : ''}${d.outcome ? `<br>Outcome: ${t(d.outcome)}` : ''}<br><em>Logged by ${noteEscape(brand)}</em>`;
   }
   const mins = typeof d.duration_seconds === 'number' ? ` (${Math.max(1, Math.round(d.duration_seconds / 60))} min)` : '';
   return `<strong>${d.direction === 'inbound' ? 'Inbound' : 'Outbound'} AI call</strong>${mins}${d.outcome ? `: ${t(d.outcome, 30)}` : ''}` +
-    `${d.summary ? `<br>${t(d.summary, 1500)}` : ''}<br><em>Logged by the AI SDR platform</em>`;
+    `${d.summary ? `<br>${t(d.summary, 1500)}` : ''}<br><em>Logged by ${noteEscape(brand)}</em>`;
 }
 
 type Stats = {
@@ -192,11 +192,12 @@ export async function runCrmSync(deps: Deps, job: Job, campaign: Campaign) {
 
     // 4. Activity notes, once each, for contacts already in HubSpot
     const acts = await store.crmActivities(ws, campaign.id, LIMITS.activities);
+    const brand = acts.length ? await store.brandName(ws) : null;
     const actContacts = await store.crmLinks(ws, 'lead', [...new Set(acts.map((a) => a.lead_id))]);
     for (const a of acts) {
       const contact = actContacts.get(a.lead_id)?.external_id;
       if (!contact) continue;
-      const id = await createNote(token, contact, noteBody(a), a.at, fetchImpl);
+      const id = await createNote(token, contact, noteBody(a, brand ?? undefined), a.at, fetchImpl);
       await store.saveCrmLink(ws, 'activity', a.id, id, null);
       stats.notes_created++;
     }

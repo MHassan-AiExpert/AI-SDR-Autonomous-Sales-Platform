@@ -1432,6 +1432,25 @@ export class Store {
     });
   }
 
+  // ---------------------------------------------------------------- white label
+
+  /** The agency's app name for a client workspace; null when the workspace has no agency brand. */
+  async brandName(workspaceId: string): Promise<string | null> {
+    const rows = await this.sql`
+      select b.app_name from workspaces w join agency_brands b on b.agency_id = w.agency_id where w.id = ${workspaceId}::uuid`;
+    return (rows[0]?.app_name ?? null) as string | null;
+  }
+
+  /** Leads the plan still allows this calendar month (UTC); null when the plan has no limit. */
+  async monthlyLeadsLeft(workspaceId: string): Promise<number | null> {
+    const rows = await this.sql`
+      select w.monthly_lead_limit as lim,
+        (select count(*)::int from leads l where l.workspace_id = w.id and l.created_at >= date_trunc('month', now())) as used
+      from workspaces w where w.id = ${workspaceId}::uuid`;
+    const r = rows[0];
+    return r?.lim === null || r?.lim === undefined ? null : Math.max(0, Number(r.lim) - Number(r.used));
+  }
+
   // ---------------------------------------------------------------- notifications
 
   async notifySettings(workspaceId: string): Promise<import('./notify.ts').NotifySettings | null> {

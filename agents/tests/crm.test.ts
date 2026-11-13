@@ -41,6 +41,11 @@ describe('CRM mapping', () => {
       .toBe('<strong>Meeting scheduled</strong> for 2026-12-01 15:30 UTC, run by the AI closer<br><em>Logged by the AI SDR platform</em>');
   });
 
+  test('CR-06 notes name the agency brand for white-label clients', () => {
+    expect(noteBody({ id: 'r', lead_id: 'l', kind: 'reply', at: new Date(), detail: { channel: 'sms', classification: null, body: 'Hi' } }, 'Northwind <Sales>'))
+      .toBe('<strong>Reply by sms</strong><br>Hi<br><em>Logged by Northwind &lt;Sales&gt;</em>');
+  });
+
   test('CR-05 the fingerprint changes only when what is sent changes', () => {
     expect(fingerprint({ a: 1 })).toBe(fingerprint({ a: 1 }));
     expect(fingerprint({ a: 1 })).not.toBe(fingerprint({ a: 2 }));
@@ -188,6 +193,20 @@ describe('HubSpot sync', () => {
     expect(j.error).toBe('HubSpot rejected the access token. Reconnect HubSpot in Setup.');
     expect(JSON.stringify(j)).not.toContain('pat-na1-CRM');
     expect((await t.db.query(`select status from integrations where workspace_id = $1 and tool = 'hubspot'`, [t.wsA])).rows[0].status).toBe('expired');
+  });
+
+  test('CJ-10 a white-label client\'s notes carry the agency brand, not the platform', async () => {
+    mode = 'ok';
+    const ag = (await t.db.query(`insert into agencies (name, owner_id) values ('Northwind', $1) returning id`, [USERS.ownerA])).rows[0].id;
+    await t.db.query(`insert into agency_brands (agency_id, app_name) values ($1, 'Northwind Sales Cloud')`, [ag]);
+    await t.db.query(`update workspaces set agency_id = $2 where id = $1`, [t.wsA, ag]);
+    await asUser(t.db, USERS.ownerA, (tx: any) => tx.query('select integration_connect($1, $2, $3::jsonb)', [t.wsA, 'hubspot', JSON.stringify({ access_token: 'pat-na1-CRM' })]));
+    await t.db.query(`insert into replies (workspace_id, lead_id, channel, body, classification) values ($1, $2, 'email', 'Sounds good', 'interested')`, [t.wsA, kim]);
+    const f = hubspot();
+    expect((await run(f)).result).toMatchObject({ notes_created: 1 });
+    const note = JSON.parse(String(calls(f, /\/objects\/notes$/)[0].init.body)).properties.hs_note_body;
+    expect(note).toContain('<em>Logged by Northwind Sales Cloud</em>');
+    expect(note).not.toContain('AI SDR');
   });
 
   test('CJ-09 the hourly schedule queues a sync only while it is on', async () => {

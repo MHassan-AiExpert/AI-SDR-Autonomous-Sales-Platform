@@ -156,6 +156,7 @@ describe('copywriting and outreach jobs', () => {
     expect(f.sent.map((s) => s.url.replace('https://api.instantly.ai/api/v2', ''))).toEqual(['/campaigns', '/leads', '/leads', '/campaigns/inst-camp-1/activate']);
     const create = f.sent[0].body;
     expect([create.email_list, create.daily_limit, create.sequences[0].steps.length, create.campaign_schedule.schedules[0].timezone]).toEqual([['sam@acme-mail.co'], 2, 3, 'America/Chicago']);
+    expect(create.name).toMatch(/ \(AI SDR\)$/);
     const lead1 = f.sent[1].body;
     expect(lead1).toMatchObject({ campaign: 'inst-camp-1', email: 'kim@brightteeth.com', first_name: 'Kim', last_name: 'Bright', company_name: 'Bright Teeth', skip_if_in_campaign: true });
     expect(lead1.custom_variables.subject_1).toBe('idea for bright teeth 1');

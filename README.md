@@ -393,6 +393,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F17](reports/F17-analytics-dashboard/feature-report.md) | Reporting and analytics dashboard with funnel, channels, revenue and cost per meeting | 26 passed |
 | [F18](reports/F18-crm-sync/feature-report.md) | CRM sync with HubSpot: contacts, deals, activity notes and wins read back | 41 passed |
 | [F19](reports/F19-monitoring-notifications/feature-report.md) | Monitoring, alerts and notifications with retries, automatic pausing and one-click handoffs | 46 passed |
+| [F20](reports/F20-white-label/feature-report.md) | White-label mode with agency brand, custom domains, agency console, client plans and usage export | 34 passed |
 
 ---
 

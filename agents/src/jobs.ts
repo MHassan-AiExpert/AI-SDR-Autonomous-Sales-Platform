@@ -91,8 +91,12 @@ export async function runLeadSourcing(deps: Deps, job: Job) {
     plan = (await planCampaign(deps, job, campaign, connected)).plan;
   }
 
-  const remaining = campaign.daily_lead_limit - (await deps.store.addedToday(job.workspace_id, campaign.id));
+  const daily = campaign.daily_lead_limit - (await deps.store.addedToday(job.workspace_id, campaign.id));
+  // A client plan can also cap the leads added each month across all campaigns
+  const monthly = await deps.store.monthlyLeadsLeft(job.workspace_id);
+  const remaining = monthly === null ? daily : Math.min(daily, monthly);
   const enabled = (Object.keys(plan.sources) as SourceChannel[]).filter((k) => plan.sources[k].enabled);
+  if (monthly !== null && monthly <= 0) return { added: 0, note: 'The monthly lead limit of your plan is reached. Ask your agency to raise it.', sources: {} };
   if (remaining <= 0) return { added: 0, note: 'The daily lead limit for this campaign is already reached', sources: {} };
   if (!enabled.length) {
     throw new JobError('No lead source can run. Connect Apollo, Apify or a language model in Setup, then plan the campaign again.');

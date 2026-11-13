@@ -64,8 +64,8 @@ export async function createPaymentLink(key: string, p: {
 
 export const STRIPE_EVENTS = ['checkout.session.completed', 'checkout.session.async_payment_succeeded'];
 
-export async function createWebhookEndpoint(key: string, url: string, fetchImpl?: Fetch): Promise<{ id: string; secret: string }> {
-  const ep = await stripe(key, 'webhook_endpoints', stripeForm({ url, enabled_events: STRIPE_EVENTS, description: 'AI SDR platform: payments for won deals' }), null, fetchImpl);
+export async function createWebhookEndpoint(key: string, url: string, fetchImpl?: Fetch, brand = 'AI SDR platform'): Promise<{ id: string; secret: string }> {
+  const ep = await stripe(key, 'webhook_endpoints', stripeForm({ url, enabled_events: STRIPE_EVENTS, description: `${brand.slice(0, 80)}: payments for won deals` }), null, fetchImpl);
   const id = str(ep.id);
   const secret = str(ep.secret);
   if (!id || !/^we_/.test(id) || !secret || !/^whsec_/.test(secret)) throw new ProviderError('Stripe', null, 'Stripe did not return a webhook endpoint');

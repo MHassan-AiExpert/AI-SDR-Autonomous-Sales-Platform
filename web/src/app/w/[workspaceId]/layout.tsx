@@ -2,6 +2,15 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { ROLE_LABELS } from '@/lib/roles';
 import { requireWorkspace } from '@/lib/session';
+import { BrandMark } from '@/components/brand-mark';
+import { brandStyle, workspaceBrand } from '@/lib/brand';
+import type { Metadata } from 'next';
+
+export async function generateMetadata({ params }: { params: Promise<{ workspaceId: string }> }): Promise<Metadata> {
+  const { workspaceId } = await params;
+  const brand = await workspaceBrand(workspaceId);
+  return { title: { default: brand.app_name, template: `%s · ${brand.app_name}` } };
+}
 
 export default async function WorkspaceLayout({
   children,
@@ -13,16 +22,17 @@ export default async function WorkspaceLayout({
   const { workspaceId } = await params;
   const { supabase, workspace, user } = await requireWorkspace(workspaceId);
   const base = `/w/${workspace.id}`;
+  const brand = await workspaceBrand(workspace.id);
   const { data: seen } = await supabase.from('notification_seen').select('seen_at').eq('workspace_id', workspace.id).eq('user_id', user.id).maybeSingle();
   let unreadQ = supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id);
   if (seen?.seen_at) unreadQ = unreadQ.gt('created_at', seen.seen_at);
   const { count: unread } = await unreadQ;
 
   return (
-    <div className="shell">
+    <div className="shell" style={brandStyle(brand)}>
       <header className="topbar">
         <div className="row">
-          <Link href="/workspaces" className="brand">AI SDR Platform</Link>
+          <Link href="/workspaces" className="brand-link"><BrandMark brand={brand} /></Link>
           <span className="divider" aria-hidden="true">/</span>
           <span className="ws-name">{workspace.name}</span>
           <span className="badge">{ROLE_LABELS[workspace.role]}</span>

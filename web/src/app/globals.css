@@ -196,3 +196,8 @@ code.pre { display: block; padding: 10px 12px; background: var(--bg); border: 1p
 .notify-critical { border-left-color: var(--danger); }
 .notify-body { white-space: pre-line; margin: 8px 0; overflow-wrap: anywhere; }
 .nav-count { display: inline-block; min-width: 1.4em; margin-left: 4px; padding: 0 5px; border-radius: 999px; background: var(--danger); color: #fff; font-size: 0.75rem; text-align: center; }
+
+/* White-label brand */
+.brand { display: inline-flex; align-items: center; gap: 8px; }
+.brand-logo { width: 24px; height: 24px; object-fit: contain; border-radius: 4px; }
+.brand-link { text-decoration: none; }

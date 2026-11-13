@@ -299,7 +299,7 @@ async function ensureStripeEndpoint(deps: Deps, ws: string, key: string) {
     log('warn', 'stripe webhook not created: WEBHOOK_BASE_URL is not set', { workspace_id: ws });
     return;
   }
-  const ep = await createWebhookEndpoint(key, `${deps.webhookBaseUrl}/webhook/stripe/${token}`, deps.fetchImpl);
+  const ep = await createWebhookEndpoint(key, `${deps.webhookBaseUrl}/webhook/stripe/${token}`, deps.fetchImpl, (await deps.store.brandName(ws)) ?? undefined);
   await deps.store.saveStripeEndpoint(ws, ep.id, ep.secret);
 }
 

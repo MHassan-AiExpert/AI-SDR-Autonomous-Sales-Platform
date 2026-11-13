@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
-const PROTECTED = ['/workspaces', '/w/'];
+const PROTECTED = ['/workspaces', '/w/', '/agency'];
 const AUTH_PAGES = ['/login', '/signup'];
 
 // Refreshes the session cookie on every request and keeps signed-out visitors
