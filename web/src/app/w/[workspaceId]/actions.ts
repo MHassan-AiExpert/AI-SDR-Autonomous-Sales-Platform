@@ -7,6 +7,7 @@ import { requireUser } from '@/lib/session';
 import { addMemberSchema, firstError, parseSettingsForm, roleSchema, uuidSchema } from '@/lib/validation';
 import { parsePlaybook } from '@/lib/closer';
 import { DECISIONS, DECISION_NOTICES, type Decision } from '@/lib/learning';
+import { spendSchema } from '@/lib/analytics';
 
 const NO_PERMISSION = 'You do not have permission to do that.';
 
@@ -251,4 +252,18 @@ export async function runLearningNow(_prev: FormState, form: FormData): Promise<
   if (error) return { error: friendlyDbError(error) };
   revalidatePath(`/w/${workspaceId}/learning`);
   return { notice: 'The learning agent will look at the latest results within a minute.' };
+}
+
+export async function saveSpend(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  if (!workspaceId) return { error: 'Workspace not found.' };
+  const parsed = spendSchema.safeParse({ monthly_spend: form.get('monthly_spend') ?? '', spend_currency: form.get('spend_currency') ?? '' });
+  if (!parsed.success) return { error: firstError(parsed.error) };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('workspaces')
+    .update({ monthly_spend_cents: parsed.data.monthly_spend, spend_currency: parsed.data.spend_currency }).eq('id', workspaceId).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${workspaceId}/analytics`);
+  return { notice: parsed.data.monthly_spend === null ? 'Spend cleared.' : 'Spend saved. Cost per meeting now uses it.' };
 }

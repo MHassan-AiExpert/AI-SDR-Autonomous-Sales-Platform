@@ -171,3 +171,17 @@ code.pre { display: block; padding: 10px 12px; background: var(--bg); border: 1p
 .audit-fair strong { color: #b45309; }
 .audit-poor strong { color: #b91c1c; }
 .audit ol { padding-left: 1.25rem; }
+
+/* Analytics */
+.funnel { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.funnel li { display: grid; grid-template-columns: 9rem 1fr; grid-template-rows: auto auto; column-gap: 12px; align-items: center; }
+.funnel-label { grid-row: span 2; font-weight: 600; }
+.funnel-bar { height: 10px; border-radius: 5px; background: var(--accent, #2563eb); min-width: 2px; }
+.funnel-value { font-size: 0.9rem; }
+.chart { width: 100%; height: auto; max-height: 220px; border-bottom: 1px solid var(--border, #d1d5db); }
+.chart polyline { stroke-width: 2; vector-effect: non-scaling-stroke; }
+.chart-emails, .key-emails { stroke: #2563eb; background: #2563eb; }
+.chart-replies, .key-replies { stroke: #16a34a; background: #16a34a; }
+.chart-meetings, .key-meetings { stroke: #d97706; background: #d97706; }
+.key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: middle; }
+@media (max-width: 560px) { .funnel li { grid-template-columns: 1fr; } .funnel-label { grid-row: auto; } }
