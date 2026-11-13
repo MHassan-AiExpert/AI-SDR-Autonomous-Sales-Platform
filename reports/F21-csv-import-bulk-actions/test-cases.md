@@ -52,7 +52,8 @@ CSV-10 and CSV-11 were written after they each caught a real defect. See "Defect
 
 | ID | Check | Result |
 | --- | --- | --- |
-| LIVE-43 | `lead_imports` with row security; `leads.import_id`; both functions security invoker; visitors refused | **Pending** — the database connector was unavailable when the feature was finished |
+| LIVE-43 | `lead_imports` with row security; `leads.import_id`; both functions security invoker; visitors refused | **Pass** — row security on with 3 policies, `leads.import_id` present, both functions `security invoker`, `anon` refused both the table and the function |
+| LIVE-44 | Security advisor after the migration | **Pass** — no new warnings. The `security definer` functions it lists are the earlier deliberate ones: public audit links, white-label host lookup, member and agency RPCs |
 
 The migration applies cleanly to a local Postgres on every test run, which is how all 11 database tests above execute.
 

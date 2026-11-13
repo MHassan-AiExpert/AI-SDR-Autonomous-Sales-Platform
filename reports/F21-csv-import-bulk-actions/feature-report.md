@@ -8,7 +8,7 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 | SRS reference | M3 (hygiene: FR-3.3 deduplication, FR-3.4 suppression, FR-3.5 normalization), M15 (lead management: FR-15.1 source channels) |
 | Location | `supabase/migrations/20261113120000_csv_import.sql`, `web/src/lib/csv.ts`, `web/src/app/w/[workspaceId]/leads/import/`, `web/src/app/w/[workspaceId]/leads/bulk-bar.tsx` |
 | Automated tests | 11 database, 6 web unit, 17 browser: 34 passed, 0 failed |
-| Live checks | Pending: the database connector was unavailable when this feature was finished. The migration is written and passes against a local Postgres, and applies on the next connected session |
+| Live checks | Passed: the migration is applied to the hosted database. Row security, the new column, both function security modes and the visitor refusals were all verified in place (LIVE-43, LIVE-44) |
 
 ## 1. Summary
 
