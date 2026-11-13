@@ -7,7 +7,7 @@ let db, wsA, wsB, leadA;
 const TENANT_TABLES = [
   'workspace_members', 'audit_log', 'agent_jobs', 'inbound_events', 'campaigns', 'companies', 'leads', 'assets', 'activities',
   'follow_ups', 'emails', 'calls', 'messages', 'replies', 'meetings', 'deals', 'suppressions',
-  'integrations', 'playbooks', 'run_logs', 'calendly_subscriptions', 'stripe_endpoints',
+  'integrations', 'playbooks', 'run_logs', 'calendly_subscriptions', 'stripe_endpoints', 'learning_reports', 'learning_suggestions',
 ];
 
 before(async () => {
@@ -19,7 +19,7 @@ before(async () => {
 
 // ---------------------------------------------------------------- structure
 test('DB-01 migrations apply cleanly in order', () => {
-  assert.equal(migrationFiles().length, 18);
+  assert.equal(migrationFiles().length, 19);
 });
 
 test('DB-02 every public table has row-level security enabled', async () => {

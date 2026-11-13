@@ -197,11 +197,11 @@ describe('enrichment edge cases', () => {
     await t.db.query(`delete from suppressions where workspace_id = $1`, [t.wsA]);
   });
 
-  test('EN-12 the daily schedule queues every stage for active campaigns', async () => {
+  test('EN-12 the schedule queues every daily stage, and the weekly learning run, for active campaigns', async () => {
     const c = await campaign(t.wsB, { status: 'active' });
     await runJobs(deps(apis(), { scheduleHours: 24 }), 1);
     const { rows } = await t.db.query(`select type from agent_jobs where campaign_id = $1 order by type`, [c]);
-    expect(rows.map((r: any) => r.type)).toEqual(['copywriting', 'enrichment', 'lead_sourcing', 'research']);
+    expect(rows.map((r: any) => r.type)).toEqual(['copywriting', 'enrichment', 'lead_sourcing', 'learning', 'research']);
     await t.db.query(`delete from agent_jobs where campaign_id = $1`, [c]);
     await t.db.query(`update campaigns set status = 'paused' where id = $1`, [c]);
   });

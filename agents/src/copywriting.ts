@@ -83,6 +83,7 @@ export function copyPrompt(campaign: Campaign, lead: CopyLead, playbook: unknown
     `Personalisation hooks: ${list(r.personalization_hooks)}`,
     `</research>`,
     '',
+    ...(campaign.learned_guidance?.length ? ["Lessons from this campaign's own results (follow them unless they conflict with your rules):", ...campaign.learned_guidance.map((g) => `- ${g}`), ''] : []),
     `Write ${count} email${count === 1 ? '' : 's'}: the first, then ${count - 1} follow-up${count - 1 === 1 ? '' : 's'} sent ${delayDays} days apart if there is no reply.`,
   ].join('\n');
 }

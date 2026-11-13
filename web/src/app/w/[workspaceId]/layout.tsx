@@ -37,6 +37,7 @@ export default async function WorkspaceLayout({
         <Link href={`${base}/texts`}>Texts</Link>
         <Link href={`${base}/deals`}>Deals</Link>
         <Link href={`${base}/playbook`}>Playbook</Link>
+        <Link href={`${base}/learning`}>Learning</Link>
         <Link href={`${base}/meetings`}>Meetings</Link>
         <Link href={`${base}/setup`}>Setup</Link>
         <Link href={`${base}/members`}>Team</Link>

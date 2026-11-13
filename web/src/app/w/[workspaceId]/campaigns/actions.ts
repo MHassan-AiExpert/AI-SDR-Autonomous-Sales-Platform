@@ -73,6 +73,7 @@ export async function queueAgentJob(_prev: FormState, form: FormData): Promise<F
     sms_outreach: 'Text follow-ups will go out within a minute, if it is inside contact hours.',
     ai_closer: 'The AI closer will check for meetings starting now and proposals to send within a minute.',
     audit_reports: 'The audit agent will audit new qualified leads within a minute.',
+    learning: 'The learning agent will look at the latest results within a minute.',
   };
   return { notice: notices[type] };
 }

@@ -27,5 +27,6 @@ Every feature of the platform ships with three documents:
 | [F13](F13-ai-closer/feature-report.md) | AI closer: playbook-led meeting calls, plan and price from the playbook, Stripe payment links, PandaDoc proposals, payments win the deal, handoffs to the team | M11, M15, M18, M19, M20, M21 | 43 passed + 2 live checks |
 | [F14](F14-ai-receptionist/feature-report.md) | Inbound AI receptionist: per-call setup from notes and playbook, transfers to the team, booking links by text with consent, callers become leads | M3, M8, M11, M15, M25 | 36 passed + 2 live checks |
 | [F15](F15-website-audits/feature-report.md) | Website and marketing audits: 13 checks measured in code, AI recommendations for failed checks, private tracked page, first email links to it, opens alert the team | M5, M11, M15, M16 | 36 passed + 2 live checks |
+| [F16](F16-self-learning/feature-report.md) | Self-learning: weekly results measured in code with significance tests, copy lessons and threshold suggestions with evidence, approval or auto-apply | M4, M5, M10, M11, M24 | 35 passed + 2 live checks |
 
 Run the infrastructure and database tests with `npm test`, the agent service tests with `cd agents && npm test`, and the web app tests with `cd web && npm test`.

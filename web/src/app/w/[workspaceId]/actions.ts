@@ -6,6 +6,7 @@ import type { FormState } from '@/lib/form-state';
 import { requireUser } from '@/lib/session';
 import { addMemberSchema, firstError, parseSettingsForm, roleSchema, uuidSchema } from '@/lib/validation';
 import { parsePlaybook } from '@/lib/closer';
+import { DECISIONS, DECISION_NOTICES, type Decision } from '@/lib/learning';
 
 const NO_PERMISSION = 'You do not have permission to do that.';
 
@@ -210,4 +211,44 @@ export async function setMeetingRunner(_prev: FormState, form: FormData): Promis
   if (!data?.length) return { error: 'This meeting has already started or you cannot change it.' };
   revalidatePath(`/w/${workspaceId}/meetings`);
   return { notice: runner === 'human' ? 'Your team runs this meeting. It is on your task list.' : 'The AI closer will run this meeting.' };
+}
+
+export async function decideLesson(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  const id = uuidSchema.safeParse(form.get('suggestion_id'));
+  const decision = String(form.get('decision') ?? '');
+  if (!workspaceId || !id.success) return { error: 'Suggestion not found.' };
+  if (!(DECISIONS as readonly string[]).includes(decision)) return { error: 'Unknown decision.' };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc('learning_decide', { p_suggestion: id.data, p_decision: decision as Decision });
+  if (error?.code === '42501') return { error: 'Only owners and admins can change lessons.' };
+  if (error) return { error: error.message.includes('already been decided') ? 'This suggestion has already been decided.' : friendlyDbError(error) };
+  revalidatePath(`/w/${workspaceId}/learning`);
+  return { notice: DECISION_NOTICES[String(data)] ?? 'Saved.' };
+}
+
+export async function setLearningAutoApply(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  const on = form.get('enabled') === 'true';
+  if (!workspaceId || !campaignId.success) return { error: 'Campaign not found.' };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('campaigns').update({ learning_auto_apply: on, updated_at: new Date().toISOString() })
+    .eq('workspace_id', workspaceId).eq('id', campaignId.data).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${workspaceId}/learning`);
+  return { notice: on ? 'New lessons for the copywriter are applied as they are found. Threshold changes still wait for you.' : 'New lessons wait for your approval.' };
+}
+
+export async function runLearningNow(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  if (!workspaceId || !campaignId.success) return { error: 'Campaign not found.' };
+  const { supabase, user } = await requireUser();
+  const { error } = await supabase.from('agent_jobs').insert({ workspace_id: workspaceId, campaign_id: campaignId.data, type: 'learning', requested_by: user.id });
+  if (error?.code === '23505') return { notice: 'A learning run is already waiting for this campaign.' };
+  if (error) return { error: friendlyDbError(error) };
+  revalidatePath(`/w/${workspaceId}/learning`);
+  return { notice: 'The learning agent will look at the latest results within a minute.' };
 }

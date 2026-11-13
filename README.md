@@ -389,6 +389,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F13](reports/F13-ai-closer/feature-report.md) | AI closer with playbook pricing, Stripe payment links, PandaDoc proposals and won deals | 43 passed |
 | [F14](reports/F14-ai-receptionist/feature-report.md) | Inbound AI receptionist with transfers, call-backs and booking links | 36 passed |
 | [F15](reports/F15-website-audits/feature-report.md) | Website and marketing audits shared as private tracked pages | 36 passed |
+| [F16](reports/F16-self-learning/feature-report.md) | Self-learning from weekly results, with lessons for the copywriter | 35 passed |
 
 ---
 

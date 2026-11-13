@@ -24,7 +24,7 @@ export type Job = {
   id: string;
   workspace_id: string;
   campaign_id: string;
-  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports';
+  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning';
   attempts: number;
   correlation_id: string;
 };
@@ -78,6 +78,8 @@ export type Campaign = {
   sms_max_messages: number;
   vapi_closer_assistant_id: string | null;
   audit_enabled: boolean;
+  learned_guidance: string[];
+  learning_auto_apply: boolean;
 };
 
 export type ReceptionistCampaign = {
@@ -107,7 +109,7 @@ export class Store {
              send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state,
              auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start,
              call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at, sms_status, sms_channel, sms_from,
-             whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages, vapi_closer_assistant_id, audit_enabled
+             whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages, vapi_closer_assistant_id, audit_enabled, learned_guidance, learning_auto_apply
       from campaigns where workspace_id = ${workspaceId}::uuid and id = ${campaignId}::uuid`;
     if (!rows.length) return null;
     const c = rows[0] as unknown as Campaign;
@@ -272,7 +274,7 @@ export class Store {
     return Number(rows[0].n);
   }
 
-  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports'): Promise<boolean> {
+  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning'): Promise<boolean> {
     const rows = await this.sql`select agent_job_enqueue(${workspaceId}::uuid, ${campaignId}::uuid, ${type}) as ok`;
     return rows[0].ok === true;
   }
@@ -1374,6 +1376,60 @@ export class Store {
         and a.first_viewed_at is not null and a.alerted_at is null
         and l.workspace_id = a.workspace_id and l.id = a.lead_id
       returning a.lead_id, a.score, coalesce(l.full_name, l.email, l.phone, 'A lead') as name`) as unknown as { lead_id: string; score: number | null; name: string }[];
+  }
+
+  // ---------------------------------------------------------------- learning
+
+  /** One row per lead whose first email went out in the period, with what happened next. */
+  async learningRows(workspaceId: string, campaignId: string, since: Date) {
+    return (await this.sql`
+      select l.id, l.source_channel, l.score, e.subject, e.body,
+        exists (select 1 from replies r where r.workspace_id = l.workspace_id and r.lead_id = l.id and r.classification in ('interested', 'question', 'referral')) as positive,
+        exists (select 1 from replies r where r.workspace_id = l.workspace_id and r.lead_id = l.id and coalesce(r.classification, '') <> 'out_of_office') as replied,
+        exists (select 1 from meetings m where m.workspace_id = l.workspace_id and m.lead_id = l.id and m.status <> 'canceled') as meeting,
+        exists (select 1 from deals d where d.workspace_id = l.workspace_id and d.lead_id = l.id and d.stage = 'won') as won,
+        exists (select 1 from assets a where a.workspace_id = l.workspace_id and a.lead_id = l.id and a.type = 'audit' and a.status = 'ready') as had_audit,
+        exists (select 1 from assets a where a.workspace_id = l.workspace_id and a.lead_id = l.id and a.type = 'audit' and a.first_viewed_at is not null) as audit_opened,
+        exists (select 1 from messages m where m.workspace_id = l.workspace_id and m.lead_id = l.id and m.direction = 'outbound' and m.step is not null) as texted,
+        exists (select 1 from calls k where k.workspace_id = l.workspace_id and k.lead_id = l.id and k.direction = 'outbound' and k.agent = 'caller') as called
+      from leads l
+      join emails e on e.workspace_id = l.workspace_id and e.lead_id = l.id and e.campaign_id = ${campaignId}::uuid and e.step = 1 and e.status = 'sent'
+      where l.workspace_id = ${workspaceId}::uuid and l.campaign_id = ${campaignId}::uuid and e.sent_at >= ${since}
+      limit 5000`) as unknown as import('./learning.ts').LearningRow[];
+  }
+
+  async saveLearningReport(workspaceId: string, campaignId: string, r: {
+    start: Date; end: Date; stats: Record<string, unknown>; findings: unknown[]; summary: string;
+    suggestions: { kind: 'copy_guidance' | 'score_threshold'; text: string; value: number | null; evidence: string; findingId: string }[];
+    autoApply: boolean;
+  }): Promise<{ reportId: string; created: number; applied: number }> {
+    return this.sql.begin(async (tx) => {
+      const report = (await tx`
+        insert into learning_reports (workspace_id, campaign_id, period_start, period_end, stats, findings, summary)
+        values (${workspaceId}::uuid, ${campaignId}::uuid, ${r.start}, ${r.end}, ${tx.json(r.stats as postgres.JSONValue)},
+                ${tx.json(r.findings as postgres.JSONValue)}, ${r.summary.slice(0, 1200)})
+        returning id`)[0].id as string;
+      let created = 0;
+      let applied = 0;
+      for (const sg of r.suggestions) {
+        const auto = r.autoApply && sg.kind === 'copy_guidance';
+        const rows = await tx`
+          insert into learning_suggestions (workspace_id, campaign_id, report_id, kind, text, value, evidence, finding_id, status, decided_at)
+          values (${workspaceId}::uuid, ${campaignId}::uuid, ${report}::uuid, ${sg.kind}, ${sg.text}, ${sg.value}, ${sg.evidence.slice(0, 400)}, ${sg.findingId},
+                  ${auto ? 'applied' : 'proposed'}, ${auto ? new Date() : null})
+          on conflict (workspace_id, campaign_id, kind, finding_id) where status in ('proposed', 'applied') do nothing
+          returning id`;
+        if (!rows.length) continue;
+        created++;
+        if (auto) {
+          await tx`
+            update campaigns set learned_guidance = (array_append(learned_guidance, ${sg.text}::text))[greatest(1, cardinality(learned_guidance) - 6):], updated_at = now()
+            where workspace_id = ${workspaceId}::uuid and id = ${campaignId}::uuid and not (${sg.text}::text = any (learned_guidance))`;
+          applied++;
+        }
+      }
+      return { reportId: report, created, applied };
+    });
   }
 
   async slackChannel(workspaceId: string): Promise<string | null> {
