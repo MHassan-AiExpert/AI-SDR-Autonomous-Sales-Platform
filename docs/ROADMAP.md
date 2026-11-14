@@ -2,7 +2,7 @@
 
 Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE ENGINEER | FULL STACK DEVELOPER
 
-Features F01 to F20 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
+Features F01 to F22 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
 
 Every feature here carries the same deliverables as the first twenty: a live migration, agent and web code, database, agent and web tests, a feature report, use cases and test cases, pushed to GitHub.
 
@@ -13,8 +13,8 @@ Work runs in three phases. The order is driven by dependencies, not by impact al
 ```mermaid
 flowchart LR
   subgraph P1[Phase 1 — Sequence engine]
-    F21[F21 CSV import<br/>and bulk actions]
-    F22[F22 Conditional branching<br/>and A/B testing]
+    F21[F21 CSV import<br/>and bulk actions<br/>DONE]
+    F22[F22 Conditional branching<br/>and A/B testing<br/>DONE]
     F23[F23 Template library]
   end
   subgraph P2[Phase 2 — Channels and data]
@@ -41,16 +41,23 @@ Upload a lead list, map the columns, and run it through the same hygiene layer a
 
 Closes a visible hole: the `csv` source channel exists in the schema with no way to use it.
 
-### F22. Conditional branching and A/B testing
-Sequence steps choose the next action from what the lead did, rather than only from elapsed days:
+### F22. Conditional branching and A/B testing — **DONE**
+See the [feature report](../reports/F22-conditional-branching-ab-testing/feature-report.md).
+
+Sequence steps choose the next action from what the lead did on any channel, rather than only from elapsed days:
 
 | Behaviour | Next step |
 | --- | --- |
-| Opened, no reply after 2 days | AI call |
+| Emailed, no reply after 2 days | AI call |
 | Call reached voicemail | Text follow-up |
-| No answer on any channel | Final email, then stop |
+| Nothing has worked on any channel | Final email, then stop |
 
-Each step can carry up to three variants. The learning agent already measures with significance testing, so it scores the winners rather than a separate A/B engine.
+Each step carries up to three messages, and the learning agent scores them with the same significance test it already applies elsewhere, rather than a separate A/B engine.
+
+Two things changed from the plan, both recorded in the feature report:
+
+- **"Opened, no reply" needed open tracking,** which `campaignBody` deliberately set to `false` and which produced no `email_opened` event. Open tracking is now a per-campaign switch, off by default; the opens condition is only offered when it is on.
+- **Email sequencing moved out of Instantly.** Instantly owned the email cadence and only sees replies to its own emails, so it could not branch. Each email step now gets its own one-step Instantly campaign, created on demand: Instantly keeps the mailboxes, sending windows and limits, and this system decides which step a lead reaches. A lead-level pause would have been simpler, but no such endpoint could be confirmed in Instantly's published v2 reference, and building on an unverified endpoint was refused.
 
 ### F23. Shared template library
 Reusable sequences, snippets and objection answers per workspace, and as agency defaults for new clients.

@@ -9,6 +9,7 @@ import { sourceGoogleMaps } from './sources/googleMaps.ts';
 import { sourceInstagram } from './sources/instagram.ts';
 import { sourceLlmSearch } from './sources/llmSearch.ts';
 import { SOURCE_LABELS, type Campaign, type Job, type Store } from './store.ts';
+import { runSequenceSteps, SequenceError } from './sequenceRun.ts';
 import { log } from './log.ts';
 import { runEnrichment as enrich, type EnrichmentDeps } from './enrichment.ts';
 import { runResearch as research, ResearchError } from './research.ts';
@@ -221,7 +222,7 @@ async function withCampaign<T>(deps: Deps, job: Job, fn: (campaign: NonNullable<
   try {
     return await fn(campaign);
   } catch (err) {
-    if (err instanceof CopyError || err instanceof OutreachError || err instanceof VoiceError || err instanceof TextError || err instanceof CrmError) throw new JobError(err.message);
+    if (err instanceof CopyError || err instanceof OutreachError || err instanceof VoiceError || err instanceof TextError || err instanceof CrmError || err instanceof SequenceError) throw new JobError(err.message);
     throw err;
   }
 }
@@ -236,12 +237,13 @@ export const runAiCloser = (deps: Deps, job: Job) => withCampaign(deps, job, (c)
 export const runAuditReports = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => audit(deps, job, c));
 export const runLearningJob = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => learn(deps, job, c));
 export const runCrmSyncJob = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => syncCrm(deps, job, c));
+export const runSequence = (deps: Deps, job: Job) => withCampaign(deps, job, (c) => runSequenceSteps(deps, job, c));
 
 const HANDLERS = {
   campaign_plan: runCampaignPlan, lead_sourcing: runLeadSourcing, enrichment: runEnrichment, research: runResearch,
   copywriting: runCopywriting, email_outreach: runEmailOutreach, reply_handling: runReplyHandling, reply_send: runReplySend, voice_outreach: runVoiceOutreach,
   sms_outreach: runTextOutreach, ai_closer: runAiCloser, audit_reports: runAuditReports, learning: runLearningJob,
-  crm_sync: runCrmSyncJob,
+  crm_sync: runCrmSyncJob, sequence: runSequence,
 } as const;
 
 // After a job succeeds, the next stage of the pipeline starts by itself
@@ -254,6 +256,7 @@ const TASK_NAMES: Record<Job['type'], string> = {
   campaign_plan: 'Campaign planning', lead_sourcing: 'Lead sourcing', enrichment: 'Enrichment', research: 'Research', copywriting: 'Email writing',
   email_outreach: 'Email sending', reply_handling: 'Reply handling', reply_send: 'Sending answers', voice_outreach: 'AI calls', sms_outreach: 'Text follow-ups',
   ai_closer: 'AI closer', audit_reports: 'Website audits', learning: 'Weekly learning', crm_sync: 'CRM sync',
+  sequence: 'Sequence steps',
 };
 
 /** Outages, timeouts and rate limits pass; wrong settings and rejected keys do not. */

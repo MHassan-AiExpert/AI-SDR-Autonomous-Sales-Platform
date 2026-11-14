@@ -24,7 +24,7 @@ export type Job = {
   id: string;
   workspace_id: string;
   campaign_id: string;
-  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning' | 'crm_sync';
+  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning' | 'crm_sync' | 'sequence';
   attempts: number;
   correlation_id: string;
 };
@@ -53,6 +53,8 @@ export type Campaign = {
   daily_send_limit: number;
   follow_up_count: number;
   follow_up_delay_days: number;
+  branching_enabled: boolean;
+  open_tracking: boolean;
   instantly_campaign_id: string | null;
   instantly_state: 'active' | 'paused' | null;
   auto_answer: boolean;
@@ -106,7 +108,7 @@ export class Store {
     const rows = await this.sql`
       select id, workspace_id, name, niche, offer, target_areas, daily_lead_limit, score_threshold, icp, source_plan,
              status, mode, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start,
-             send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, instantly_campaign_id, instantly_state,
+             send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, branching_enabled, open_tracking, instantly_campaign_id, instantly_state,
              auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start,
              call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at, sms_status, sms_channel, sms_from,
              whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages, vapi_closer_assistant_id, audit_enabled, learned_guidance, learning_auto_apply
@@ -274,7 +276,7 @@ export class Store {
     return Number(rows[0].n);
   }
 
-  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning' | 'crm_sync'): Promise<boolean> {
+  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning' | 'crm_sync' | 'sequence'): Promise<boolean> {
     const rows = await this.sql`select agent_job_enqueue(${workspaceId}::uuid, ${campaignId}::uuid, ${type}) as ok`;
     return rows[0].ok === true;
   }
@@ -1384,6 +1386,9 @@ export class Store {
   async learningRows(workspaceId: string, campaignId: string, since: Date) {
     return (await this.sql`
       select l.id, l.source_channel, l.score, e.subject, e.body,
+        (select r.variant_label from lead_step_runs r
+         where r.workspace_id = l.workspace_id and r.lead_id = l.id and r.outcome = 'sent'
+         order by r.ran_at limit 1) as variant,
         exists (select 1 from replies r where r.workspace_id = l.workspace_id and r.lead_id = l.id and r.classification in ('interested', 'question', 'referral')) as positive,
         exists (select 1 from replies r where r.workspace_id = l.workspace_id and r.lead_id = l.id and coalesce(r.classification, '') <> 'out_of_office') as replied,
         exists (select 1 from meetings m where m.workspace_id = l.workspace_id and m.lead_id = l.id and m.status <> 'canceled') as meeting,
@@ -1720,7 +1725,97 @@ export class Store {
       where workspace_id = ${workspaceId}::uuid and campaign_id = ${campaignId}::uuid and created_at >= date_trunc('day', now())`;
     return rows[0].n as number;
   }
+
+  // ---------------------------------------------------------------- sequences
+
+  /** A campaign's sequence, in order, each step with its variants. */
+  async sequenceSteps(workspaceId: string, campaignId: string): Promise<SequenceStepRow[]> {
+    return (await this.sql`
+      select s.id, s.position, s.channel, s.wait_hours, s.condition, s.is_last, s.instantly_campaign_id,
+             coalesce((
+               select json_agg(json_build_object('id', v.id, 'label', v.label, 'subject', v.subject,
+                                                 'body', v.body, 'active', v.active) order by v.label)
+               from sequence_variants v
+               where v.workspace_id = s.workspace_id and v.step_id = s.id
+             ), '[]'::json) as variants
+      from sequence_steps s
+      where s.workspace_id = ${workspaceId}::uuid and s.campaign_id = ${campaignId}::uuid
+      order by s.position`) as unknown as SequenceStepRow[];
+  }
+
+  /** Leads still worth another step, with every fact a condition may ask about. */
+  async sequenceCandidates(workspaceId: string, campaignId: string, limit: number): Promise<SequenceCandidate[]> {
+    return (await this.sql`
+      select * from sequence_candidates(${workspaceId}::uuid, ${campaignId}::uuid, ${limit})`) as unknown as SequenceCandidate[];
+  }
+
+  /** False when the step had already run for this lead, which keeps retries safe. */
+  async recordStepRun(
+    workspaceId: string, leadId: string, stepId: string,
+    variant: string | null, outcome: 'sent' | 'skipped' | 'failed', detail: string | null,
+  ): Promise<boolean> {
+    const rows = await this.sql`
+      select lead_step_record(${workspaceId}::uuid, ${leadId}::uuid, ${stepId}::uuid,
+                              ${variant}, ${outcome}, ${detail}) as recorded`;
+    return rows[0].recorded === true;
+  }
+
+  /** Remembers the one-step Instantly campaign that sends an email step. */
+  async setStepInstantlyCampaign(workspaceId: string, stepId: string, instantlyId: string) {
+    await this.sql`
+      update sequence_steps set instantly_campaign_id = ${instantlyId}
+      where workspace_id = ${workspaceId}::uuid and id = ${stepId}::uuid`;
+  }
+
+  /** How many steps this campaign sent today, against the campaign's daily limit. */
+  async stepsSentToday(workspaceId: string, campaignId: string): Promise<number> {
+    const rows = await this.sql`
+      select count(*)::int as n
+      from lead_step_runs r
+      join sequence_steps s on s.workspace_id = r.workspace_id and s.id = r.step_id
+      where r.workspace_id = ${workspaceId}::uuid and s.campaign_id = ${campaignId}::uuid
+        and r.outcome = 'sent' and r.ran_at >= date_trunc('day', now())`;
+    return rows[0].n as number;
+  }
+
+  /** What each variant of each step achieved, for the A/B results table. */
+  async variantResults(workspaceId: string, campaignId: string): Promise<VariantResult[]> {
+    return (await this.sql`
+      select s.position, s.channel, r.variant_label as label,
+             count(*)::int as sent,
+             count(*) filter (where exists (
+               select 1 from replies rp where rp.workspace_id = r.workspace_id and rp.lead_id = r.lead_id
+                 and rp.created_at > r.ran_at
+             ))::int as replied,
+             count(*) filter (where exists (
+               select 1 from meetings m where m.workspace_id = r.workspace_id and m.lead_id = r.lead_id
+                 and m.created_at > r.ran_at
+             ))::int as meetings
+      from lead_step_runs r
+      join sequence_steps s on s.workspace_id = r.workspace_id and s.id = r.step_id
+      where r.workspace_id = ${workspaceId}::uuid and s.campaign_id = ${campaignId}::uuid
+        and r.outcome = 'sent' and r.variant_label is not null
+      group by s.position, s.channel, r.variant_label
+      order by s.position, r.variant_label`) as unknown as VariantResult[];
+  }
 }
+
+export type SequenceStepRow = {
+  id: string; position: number; channel: 'email' | 'voice' | 'sms' | 'whatsapp'; wait_hours: number;
+  condition: unknown; is_last: boolean; instantly_campaign_id: string | null;
+  variants: { id: string; label: 'a' | 'b' | 'c'; subject: string | null; body: string; active: boolean }[];
+};
+
+export type SequenceCandidate = {
+  lead_id: string; email: string | null; phone: string | null; full_name: string | null; title: string | null;
+  company_name: string; domain: string | null; score: number | null; stage: string;
+  phone_line_type: string | null; consent: Record<string, unknown> | null; ai_report: Record<string, unknown> | null;
+  facts: Record<string, unknown>;
+};
+
+export type VariantResult = {
+  position: number; channel: string; label: 'a' | 'b' | 'c'; sent: number; replied: number; meetings: number;
+};
 
 export const SOURCE_LABELS: Record<LeadCandidate['source'], string> = {
   apollo: 'Apollo', google_maps: 'Google Maps', instagram: 'Instagram', llm_search: 'LLM search',

@@ -6,7 +6,7 @@ import type { Campaign } from '../src/store.ts';
 import { startTestDb, fakeFetch, asUser, USERS, type TestDb } from './harness.ts';
 
 const row = (over: Partial<LearningRow> = {}): LearningRow => ({
-  id: 'l', source_channel: 'apollo', score: 80, subject: 'Quick idea', body: 'word '.repeat(50), positive: false, replied: false, meeting: false, won: false,
+  id: 'l', source_channel: 'apollo', score: 80, subject: 'Quick idea', body: 'word '.repeat(50), variant: null, positive: false, replied: false, meeting: false, won: false,
   had_audit: false, audit_opened: false, texted: false, called: false, ...over,
 });
 const many = (n: number, wonCount: number, over: Partial<LearningRow>) => Array.from({ length: n }, (_, i) => row({ ...over, positive: i < wonCount, replied: i < wonCount }));
@@ -28,6 +28,21 @@ describe('learning rules', () => {
     expect(style[0].text).toBe('Subject lines written as a question won interest 25.0% of the time (15 of 60), against 5.0% for the rest (3 of 60).');
     expect(findings([...many(20, 8, { subject: 'Worth a look?' }), ...many(20, 1, { subject: 'Quick idea' })])).toEqual([]);
     expect(findings([...many(200, 20, { subject: 'Worth a look?' }), ...many(200, 18, { subject: 'Quick idea' })])).toEqual([]);
+  });
+
+  test('LRN-26 an A/B message that clearly wins is reported, and a close one is not', () => {
+    const clear = findings([...many(60, 15, { variant: 'b' }), ...many(60, 3, { variant: 'a' })])
+      .filter((f) => f.dimension === 'variant');
+    expect(clear).toHaveLength(1);
+    expect(clear[0]).toMatchObject({ id: 'variant:b', direction: 'better', n: 60, rest_n: 60 });
+    // Too few on each side, and too small a difference, are both left alone
+    expect(findings([...many(20, 8, { variant: 'b' }), ...many(20, 1, { variant: 'a' })])
+      .filter((f) => f.dimension === 'variant')).toEqual([]);
+    expect(findings([...many(200, 20, { variant: 'b' }), ...many(200, 18, { variant: 'a' })])
+      .filter((f) => f.dimension === 'variant')).toEqual([]);
+    // Leads that were never in an A/B step are not counted as a group of their own
+    expect(findings([...many(60, 15, { variant: null }), ...many(60, 3, { variant: null })])
+      .filter((f) => f.dimension === 'variant')).toEqual([]);
   });
 
   test('LL-03 lessons come only from better copy findings; a weak lowest band suggests a higher threshold', () => {

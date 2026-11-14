@@ -15,6 +15,7 @@ import { log } from './log.ts';
 
 export type LearningRow = {
   id: string; source_channel: string | null; score: number | null; subject: string | null; body: string | null;
+  variant: string | null;
   positive: boolean; replied: boolean; meeting: boolean; won: boolean; had_audit: boolean; audit_opened: boolean; texted: boolean; called: boolean;
 };
 
@@ -36,6 +37,10 @@ export const DIMENSIONS: Dimension[] = [
     names: { short: 'subject lines of four words or fewer', long: 'subject lines of five words or more' } },
   { id: 'body_length', label: 'First email length', copy: true, bucket: (r) => (r.body ? (words(r.body) <= 60 ? 'short' : words(r.body) <= 100 ? 'medium' : 'long') : null),
     names: { short: 'first emails under 60 words', medium: 'first emails of 60 to 100 words', long: 'first emails over 100 words' } },
+  // Which message of an A/B step the lead was sent (F22). Scored with the same
+  // test as every other dimension, so a winner has to clear the same bar.
+  { id: 'variant', label: 'A/B message', copy: false, bucket: (r) => (r.variant ? r.variant : null),
+    names: { a: 'message A', b: 'message B', c: 'message C' } },
   { id: 'source', label: 'Lead source', copy: false, bucket: (r) => r.source_channel, names: {} },
   { id: 'score_band', label: 'Lead score', copy: false, bucket: (r) => (r.score === null ? null : `${Math.min(90, Math.floor(r.score / 10) * 10)}`), names: {} },
   { id: 'audit', label: 'Website audit', copy: false, bucket: (r) => (r.had_audit ? 'with' : 'without'), names: { with: 'leads who got a website audit', without: 'leads without an audit' } },

@@ -14,6 +14,7 @@ import { parseVoiceSettings, voiceReadiness } from '@/lib/voice';
 import { parseTextSettings, textReadiness } from '@/lib/texting';
 import { closerAssistantSchema } from '@/lib/closer';
 import { parseReceptionistSettings } from '@/lib/receptionist';
+import { conditionFor, stepSchema, variantSchema } from '@/lib/sequence';
 
 const NO_PERMISSION = 'Only owners and admins can manage campaigns.';
 
@@ -75,6 +76,7 @@ export async function queueAgentJob(_prev: FormState, form: FormData): Promise<F
     audit_reports: 'The audit agent will audit new qualified leads within a minute.',
     learning: 'The learning agent will look at the latest results within a minute.',
     crm_sync: 'This campaign will be synced to HubSpot within a minute.',
+    sequence: 'The sequence agent will send whatever step is due within a minute, inside the campaign\'s contact hours and daily limit.',
   };
   return { notice: notices[type] };
 }
@@ -407,4 +409,129 @@ export async function setAuditEnabled(_prev: FormState, form: FormData): Promise
   if (enabled) await supabase.from('agent_jobs').insert({ workspace_id: ws.data, campaign_id: campaignId.data, type: 'audit_reports', requested_by: user.id });
   revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}`);
   return { notice: enabled ? 'Audits are on. Qualified leads get their audit within a minute, and emails link to it.' : 'Audits are off. New emails are written without an audit.' };
+}
+
+// ---------------------------------------------------------------- sequence (F22)
+
+const SEQ_NO_PERMISSION = 'Only owners, admins and reps can change a sequence.';
+
+/** Adds a step, or changes one when step_id is given. */
+export async function saveSequenceStep(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  const stepId = form.get('step_id') ? uuidSchema.safeParse(form.get('step_id')) : null;
+  if (stepId && !stepId.success) return { error: 'Step not found.' };
+
+  const parsed = stepSchema.safeParse({
+    position: form.get('position'),
+    channel: form.get('channel'),
+    wait_hours: form.get('wait_hours'),
+    trigger: form.get('trigger'),
+    is_last: form.get('is_last') === 'on',
+  });
+  if (!parsed.success) return { error: firstError(parsed.error) };
+
+  const { supabase } = await requireUser();
+  const row = {
+    workspace_id: ws.data,
+    campaign_id: campaignId.data,
+    position: parsed.data.position,
+    channel: parsed.data.channel,
+    wait_hours: parsed.data.wait_hours,
+    condition: conditionFor(parsed.data.trigger),
+    is_last: parsed.data.is_last,
+  };
+  const query = stepId
+    ? supabase.from('sequence_steps').update(row).eq('workspace_id', ws.data).eq('id', stepId.data).select('id')
+    : supabase.from('sequence_steps').insert(row).select('id');
+  const { data, error } = await query;
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: SEQ_NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}/sequence`);
+  return { notice: stepId ? `Step ${parsed.data.position} saved.` : `Step ${parsed.data.position} added. Give it a message next.` };
+}
+
+export async function deleteSequenceStep(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  const stepId = uuidSchema.safeParse(form.get('step_id'));
+  if (!ws.success || !campaignId.success || !stepId.success) return { error: 'Step not found.' };
+
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('sequence_steps')
+    .delete().eq('workspace_id', ws.data).eq('id', stepId.data).select('id, position');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: SEQ_NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}/sequence`);
+  return { notice: `Step ${data[0].position} removed, with its messages and their history.` };
+}
+
+/** Writes one of a step's up-to-three messages. */
+export async function saveSequenceVariant(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  const stepId = uuidSchema.safeParse(form.get('step_id'));
+  if (!ws.success || !campaignId.success || !stepId.success) return { error: 'Step not found.' };
+
+  const parsed = variantSchema.safeParse({
+    label: form.get('label'),
+    subject: form.get('subject') ?? '',
+    body: form.get('body') ?? '',
+    active: form.get('active') === 'on',
+  });
+  if (!parsed.success) return { error: firstError(parsed.error) };
+
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('sequence_variants')
+    .upsert({
+      workspace_id: ws.data,
+      step_id: stepId.data,
+      label: parsed.data.label,
+      subject: parsed.data.subject?.trim() ? parsed.data.subject.trim() : null,
+      body: parsed.data.body,
+      active: parsed.data.active,
+    }, { onConflict: 'workspace_id,step_id,label' })
+    .select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: SEQ_NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}/sequence`);
+  return { notice: `Message ${parsed.data.label.toUpperCase()} saved.` };
+}
+
+export async function deleteSequenceVariant(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  const variantId = uuidSchema.safeParse(form.get('variant_id'));
+  if (!ws.success || !campaignId.success || !variantId.success) return { error: 'Message not found.' };
+
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('sequence_variants')
+    .delete().eq('workspace_id', ws.data).eq('id', variantId.data).select('label');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: SEQ_NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}/sequence`);
+  return { notice: `Message ${String(data[0].label).toUpperCase()} removed. Its past results stay in the comparison.` };
+}
+
+/** Turns branching and open tracking on or off for a campaign. */
+export async function saveSequenceSettings(_prev: FormState, form: FormData): Promise<FormState> {
+  const ws = uuidSchema.safeParse(form.get('workspace_id'));
+  const campaignId = uuidSchema.safeParse(form.get('campaign_id'));
+  if (!ws.success || !campaignId.success) return { error: 'Campaign not found.' };
+  const branching = form.get('branching_enabled') === 'on';
+  const openTracking = form.get('open_tracking') === 'on';
+
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('campaigns')
+    .update({ branching_enabled: branching, open_tracking: openTracking, updated_at: new Date().toISOString() })
+    .eq('workspace_id', ws.data).eq('id', campaignId.data).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${ws.data}/campaigns/${campaignId.data}/sequence`);
+  return {
+    notice: branching
+      ? 'Branching is on. The sequence below now decides each step, instead of the fixed email cadence.'
+      : 'Branching is off. The fixed email cadence is in charge again.',
+  };
 }

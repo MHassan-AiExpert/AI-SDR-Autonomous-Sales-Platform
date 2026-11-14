@@ -33,5 +33,6 @@ Every feature of the platform ships with three documents:
 | [F19](F19-monitoring-notifications/feature-report.md) | Monitoring, alerts and notifications: in-app notification centre, Slack events and quiet hours, one-click handoffs, retries with backoff, automatic email pausing on bounce or opt-out spikes, tool and credit alerts, daily summary, readiness endpoint | M11, M22, FR-23.4, 10.4, 10.6 | 46 passed + 2 live checks |
 | [F20](F20-white-label/feature-report.md) | White-label mode: agency brand on custom domains and in client workspaces, agency console with client plans, limits and usage, CSV usage export, default playbook and cadence, isolation through workspace roles | M26, 10.1 | 34 passed + 2 live checks |
 | [F21](F21-csv-import-bulk-actions/feature-report.md) | CSV import with the same hygiene as sourced leads, import history and undo, and bulk stage, owner, campaign and suppress actions | M3, M15 | 34 passed |
+| [F22](F22-conditional-branching-ab-testing/feature-report.md) | Conditional branching: steps choose the next action from what the lead did on any channel, with up to three A/B messages per step scored by the learning agent | M6, M7, M24 | 48 passed + 3 live checks |
 
 Run the infrastructure and database tests with `npm test`, the agent service tests with `cd agents && npm test`, and the web app tests with `cd web && npm test`.

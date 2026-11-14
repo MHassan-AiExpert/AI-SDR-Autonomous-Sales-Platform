@@ -111,9 +111,9 @@ export function filtersToQuery(f: LeadFilters, overrides: Partial<LeadFilters> =
   return s ? `?${s}` : '';
 }
 
-export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies', reply_send: 'Send answers', voice_outreach: 'AI calls', sms_outreach: 'Text follow-ups', ai_closer: 'AI closer', audit_reports: 'Website audits', learning: 'Weekly learning', crm_sync: 'CRM sync' };
+export const JOB_LABELS: Record<string, string> = { campaign_plan: 'Plan campaign', lead_sourcing: 'Find leads', enrichment: 'Enrich and verify', research: 'Research and score', copywriting: 'Write emails', email_outreach: 'Send emails', reply_handling: 'Read replies', reply_send: 'Send answers', voice_outreach: 'AI calls', sms_outreach: 'Text follow-ups', ai_closer: 'AI closer', audit_reports: 'Website audits', learning: 'Weekly learning', crm_sync: 'CRM sync', sequence: 'Sequence steps' };
 
-export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach', 'voice_outreach', 'sms_outreach', 'ai_closer', 'audit_reports', 'learning', 'crm_sync'] as const;
+export const JOB_TYPES = ['campaign_plan', 'lead_sourcing', 'enrichment', 'research', 'copywriting', 'email_outreach', 'voice_outreach', 'sms_outreach', 'ai_closer', 'audit_reports', 'learning', 'crm_sync', 'sequence'] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 export const JOB_STATUS_LABELS: Record<string, string> = { queued: 'Queued', running: 'Running', succeeded: 'Done', failed: 'Failed' };
 
