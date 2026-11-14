@@ -36,7 +36,9 @@ flowchart LR
 
 ## Phase 1 — Sequence engine
 
-### F21. CSV import and bulk actions
+### F21. CSV import and bulk actions — **DONE**
+See the [feature report](../reports/F21-csv-import-bulk-actions/feature-report.md).
+
 Upload a lead list, map the columns, and run it through the same hygiene layer as sourced leads: normalize, deduplicate, check against suppressions. Multi-select on the leads list for bulk stage changes, owner assignment, adding to a campaign and suppressing.
 
 Closes a visible hole: the `csv` source channel exists in the schema with no way to use it.
