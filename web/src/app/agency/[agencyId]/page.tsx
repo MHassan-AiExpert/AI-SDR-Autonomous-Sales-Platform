@@ -5,7 +5,8 @@ import { BrandMark } from '@/components/brand-mark';
 import { brandStyle, readBrand } from '@/lib/brand';
 import { AGENCY_ROLE_LABELS, DEFAULT_FIELDS, canManageAgency, readUsage, requireAgency, revenueText, usagePercent, type AgencyRole } from '@/lib/agency';
 import { RANGES, RANGE_LABELS, parseRange, period } from '@/lib/analytics';
-import { addAgencyMember, createClientWorkspace, removeAgencyMember, saveBrand, saveDefaults, setClientPlan } from '../actions';
+import { addAgencyMember, createClientWorkspace, deleteAgencyTemplate, promoteTemplate, removeAgencyMember, saveBrand, saveDefaults, setClientPlan, setTemplateDefault } from '../actions';
+import { KIND_LABELS, describeSequenceTemplate, type TemplateRow } from '@/lib/templates';
 
 export const metadata: Metadata = { title: 'Agency console' };
 
@@ -17,17 +18,23 @@ export default async function AgencyConsole({ params, searchParams }: { params: 
   const { from, to } = period(range);
   const manage = canManageAgency(agency.role);
 
-  const [{ data: rawUsage, error: usageError }, { data: brandRow }, { data: team }, { data: myWorkspaces }] = await Promise.all([
+  const [{ data: rawUsage, error: usageError }, { data: brandRow }, { data: team }, { data: myWorkspaces }, { data: libraryRows }, { data: promotableRows }] = await Promise.all([
     supabase.rpc('agency_usage', { ag: agency.id, p_from: from.toISOString(), p_to: to.toISOString() }),
     supabase.from('agency_brands').select('app_name, logo_url, primary_color, support_email, custom_domain').eq('agency_id', agency.id).maybeSingle(),
     supabase.rpc('agency_members_list', { ag: agency.id }),
     supabase.from('workspace_members').select('workspace_id, role').eq('user_id', user.id),
+    supabase.from('templates').select('id, workspace_id, agency_id, kind, name, description, payload, is_default, updated_at')
+      .eq('agency_id', agency.id).order('kind').order('name'),
+    supabase.from('templates').select('id, workspace_id, agency_id, kind, name, description, payload, is_default, updated_at')
+      .not('workspace_id', 'is', null).order('kind').order('name'),
   ]);
   const usage = readUsage(rawUsage);
   const brand = readBrand(brandRow ?? { app_name: agency.name });
   const memberOf = new Set((myWorkspaces ?? []).map((m) => m.workspace_id));
   const defaults = agency.campaign_defaults;
   const hidden = <input type="hidden" name="agency_id" value={agency.id} />;
+  const library = (libraryRows ?? []) as unknown as TemplateRow[];
+  const promotable = (promotableRows ?? []) as unknown as TemplateRow[];
 
   return (
     <div className="shell" style={brandStyle(brand)}>
@@ -170,6 +177,85 @@ export default async function AgencyConsole({ params, searchParams }: { params: 
             </fieldset>
             {manage ? <SubmitButton>Save defaults</SubmitButton> : null}
           </ActionForm>
+        </section>
+
+        <section className="card stack" aria-labelledby="library">
+          <h2 id="library">Template library</h2>
+          <p className="muted">
+            Build a sequence or a snippet once in one client workspace, then copy it here. Anything marked as a
+            default is copied into every new client workspace when it is created; clients already created keep what
+            they have.
+          </p>
+
+          {library.length === 0 ? (
+            <p>Nothing in the agency library yet.</p>
+          ) : (
+            <div className="table-wrap">
+              <table className="table">
+                <caption className="sr-only">Templates in the agency library</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Kind</th>
+                    <th scope="col">What it is</th>
+                    <th scope="col">New clients get it</th>
+                    {manage ? <th scope="col">Change</th> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  {library.map((t) => (
+                    <tr key={t.id}>
+                      <th scope="row">{t.name}</th>
+                      <td>{KIND_LABELS[t.kind]}</td>
+                      <td>{t.kind === 'sequence' ? describeSequenceTemplate(t) : (t.description ?? 'A block of copy.')}</td>
+                      <td>{t.is_default ? 'Yes' : 'No'}</td>
+                      {manage ? (
+                        <td>
+                          <ActionForm action={setTemplateDefault}>
+                            {hidden}
+                            <input type="hidden" name="template_id" value={t.id} />
+                            {t.is_default ? null : <input type="hidden" name="is_default" value="on" />}
+                            <SubmitButton variant="ghost">{t.is_default ? 'Stop giving it to new clients' : 'Give it to new clients'}</SubmitButton>
+                          </ActionForm>
+                          <ActionForm action={deleteAgencyTemplate}>
+                            {hidden}
+                            <input type="hidden" name="template_id" value={t.id} />
+                            <SubmitButton variant="ghost">Remove</SubmitButton>
+                          </ActionForm>
+                        </td>
+                      ) : null}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {manage ? (
+            promotable.length === 0 ? (
+              <p className="muted">
+                Nothing to copy yet. Save a sequence or add a snippet in one of your client workspaces first.
+              </p>
+            ) : (
+              <ActionForm action={promoteTemplate} className="stack">
+                {hidden}
+                <label className="field">
+                  <span>Copy a template from a client workspace</span>
+                  <select name="template_id" defaultValue="">
+                    <option value="" disabled>Choose a template</option>
+                    {promotable.map((t) => (
+                      <option key={t.id} value={t.id}>{KIND_LABELS[t.kind]}: {t.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="choice">
+                  <input type="checkbox" name="is_default" defaultChecked />
+                  <span>Give it to every new client workspace</span>
+                </label>
+                <SubmitButton variant="secondary">Copy into the agency library</SubmitButton>
+              </ActionForm>
+            )
+          ) : null}
         </section>
 
         <section className="card stack" aria-labelledby="team">

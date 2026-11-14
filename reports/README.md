@@ -34,5 +34,6 @@ Every feature of the platform ships with three documents:
 | [F20](F20-white-label/feature-report.md) | White-label mode: agency brand on custom domains and in client workspaces, agency console with client plans, limits and usage, CSV usage export, default playbook and cadence, isolation through workspace roles | M26, 10.1 | 34 passed + 2 live checks |
 | [F21](F21-csv-import-bulk-actions/feature-report.md) | CSV import with the same hygiene as sourced leads, import history and undo, and bulk stage, owner, campaign and suppress actions | M3, M15 | 34 passed |
 | [F22](F22-conditional-branching-ab-testing/feature-report.md) | Conditional branching: steps choose the next action from what the lead did on any channel, with up to three A/B messages per step scored by the learning agent | M6, M7, M24 | 48 passed + 3 live checks |
+| [F23](F23-template-library/feature-report.md) | Shared template library: save and apply sequences, snippets the copywriter draws on, agency defaults inherited by new client workspaces, and the playbook's objection answers wired into the reply agent | M4, M6, M26 | 37 passed |
 
 Run the infrastructure and database tests with `npm test`, the agent service tests with `cd agents && npm test`, and the web app tests with `cd web && npm test`.

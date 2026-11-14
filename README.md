@@ -396,6 +396,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F20](reports/F20-white-label/feature-report.md) | White-label mode with agency brand, custom domains, agency console, client plans and usage export | 34 passed |
 | [F21](reports/F21-csv-import-bulk-actions/feature-report.md) | CSV lead import with hygiene and undo, plus bulk actions on the lead list | 34 passed |
 | [F22](reports/F22-conditional-branching-ab-testing/feature-report.md) | Conditional branching across email, calls and texts, with A/B messages scored for significance | 48 passed |
+| [F23](reports/F23-template-library/feature-report.md) | Shared template library for sequences and snippets, with agency defaults for new client workspaces | 37 passed |
 
 ---
 

@@ -124,3 +124,83 @@ export async function removeAgencyMember(_prev: FormState, form: FormData): Prom
   revalidatePath(`/agency/${agencyId}`);
   return { notice: 'Removed from the agency team. Their roles in client workspaces stay until a workspace owner removes them.' };
 }
+
+// ---------------------------------------------------------------- templates (F23)
+
+/**
+ * Copies a client workspace's template into the agency library, so the agency
+ * can build its standard sequence once in a real workspace and hand it to every
+ * new client. A copy, like the default playbook above.
+ */
+export async function promoteTemplate(_prev: FormState, form: FormData): Promise<FormState> {
+  const agencyId = agencyIdFrom(form);
+  if (!agencyId) return { error: 'Agency not found.' };
+  const source = uuidSchema.safeParse(form.get('template_id'));
+  if (!source.success) return { error: 'Choose a template to copy into the agency library.' };
+  const asDefault = form.get('is_default') === 'on';
+
+  const { supabase } = await requireUser();
+  const { data: t } = await supabase.from('templates')
+    .select('kind, name, description, payload')
+    .eq('id', source.data).maybeSingle();
+  if (!t) return { error: 'That template was not found, or you are not a member of the workspace it belongs to.' };
+
+  const { data, error } = await supabase.from('templates')
+    .insert({
+      agency_id: agencyId,
+      kind: t.kind,
+      name: t.name,
+      description: t.description,
+      payload: t.payload,
+      is_default: asDefault,
+    })
+    .select('id');
+  if (error) {
+    if (error.code === '23505' || /duplicate key|unique/i.test(error.message)) {
+      return { error: `The agency library already has a ${t.kind} called "${t.name}". Rename one of them first.` };
+    }
+    return { error: friendlyDbError(error) };
+  }
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/agency/${agencyId}`);
+  return {
+    notice: asDefault
+      ? `"${t.name}" is in the agency library and every new client workspace will start with it.`
+      : `"${t.name}" is in the agency library. Mark it as a default to give it to new clients.`,
+  };
+}
+
+/** Turns an agency template into a default for new clients, or back again. */
+export async function setTemplateDefault(_prev: FormState, form: FormData): Promise<FormState> {
+  const agencyId = agencyIdFrom(form);
+  const templateId = uuidSchema.safeParse(form.get('template_id'));
+  if (!agencyId || !templateId.success) return { error: 'Template not found.' };
+  const wanted = form.get('is_default') === 'on';
+
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('templates')
+    .update({ is_default: wanted })
+    .eq('agency_id', agencyId).eq('id', templateId.data).select('name');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/agency/${agencyId}`);
+  return {
+    notice: wanted
+      ? `New client workspaces will start with "${data[0].name}". Clients already created are untouched.`
+      : `"${data[0].name}" stays in the library but new clients will not get it.`,
+  };
+}
+
+export async function deleteAgencyTemplate(_prev: FormState, form: FormData): Promise<FormState> {
+  const agencyId = agencyIdFrom(form);
+  const templateId = uuidSchema.safeParse(form.get('template_id'));
+  if (!agencyId || !templateId.success) return { error: 'Template not found.' };
+
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('templates')
+    .delete().eq('agency_id', agencyId).eq('id', templateId.data).select('name');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/agency/${agencyId}`);
+  return { notice: `"${data[0].name}" removed from the agency library. Copies already in client workspaces stay with them.` };
+}

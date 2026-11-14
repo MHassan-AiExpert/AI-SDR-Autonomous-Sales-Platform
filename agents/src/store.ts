@@ -1726,6 +1726,40 @@ export class Store {
     return rows[0].n as number;
   }
 
+  // ---------------------------------------------------------------- templates
+
+  /** The workspace's reusable copy blocks, for the writer to draw on. */
+  async snippets(workspaceId: string, limit = 20): Promise<{ name: string; body: string }[]> {
+    const rows = await this.sql`
+      select name, payload->>'body' as body
+      from templates
+      where workspace_id = ${workspaceId}::uuid and kind = 'snippet'
+        and coalesce(payload->>'body', '') <> ''
+      order by name
+      limit ${limit}`;
+    return rows.map((r) => ({ name: r.name as string, body: r.body as string }));
+  }
+
+  /**
+   * The objection answers the team already wrote in the active playbook. They
+   * were only reaching the closer agent; the reply agent needs them too.
+   */
+  async objectionAnswers(workspaceId: string, limit = 12): Promise<{ objection: string; answer: string }[]> {
+    const rows = await this.sql`
+      select content->'objections' as objections
+      from playbooks
+      where workspace_id = ${workspaceId}::uuid and is_active
+      order by version desc limit 1`;
+    const list = rows[0]?.objections;
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter((o): o is { objection: string; answer: string } =>
+        Boolean(o) && typeof o === 'object'
+        && typeof (o as Record<string, unknown>).objection === 'string'
+        && typeof (o as Record<string, unknown>).answer === 'string')
+      .slice(0, limit);
+  }
+
   // ---------------------------------------------------------------- sequences
 
   /** A campaign's sequence, in order, each step with its variants. */

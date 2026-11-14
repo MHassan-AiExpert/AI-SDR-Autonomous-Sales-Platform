@@ -13,6 +13,7 @@ import {
   deleteSequenceStep, deleteSequenceVariant, queueAgentJob,
   saveSequenceSettings, saveSequenceStep, saveSequenceVariant,
 } from '../../actions';
+import { saveSequenceTemplate } from '../../../templates/actions';
 
 export const metadata: Metadata = { title: 'Sequence' };
 
@@ -312,6 +313,30 @@ export default async function SequencePage({ params }: { params: Promise<{ works
             <input type="hidden" name="campaign_id" value={campaign.id} />
             <input type="hidden" name="type" value="sequence" />
             <SubmitButton variant="secondary">Run sequence steps</SubmitButton>
+          </ActionForm>
+        </section>
+      )}
+
+      {manage && steps.length > 0 && (
+        <section className="card stack">
+          <h2>Save this sequence as a template</h2>
+          <p>
+            Keeps a copy in the <Link href={`${base}/templates`}>template library</Link> so it can be applied to
+            another campaign. A copy, not a link: changing this campaign later will not change the template, and
+            messages that are switched off are not carried into it.
+          </p>
+          <ActionForm action={saveSequenceTemplate} className="stack">
+            <input type="hidden" name="workspace_id" value={workspace.id} />
+            <input type="hidden" name="campaign_id" value={campaign.id} />
+            <label className="field">
+              <span>Name</span>
+              <input type="text" name="name" maxLength={120} required defaultValue={`${campaign.name} sequence`} />
+            </label>
+            <label className="field">
+              <span>What it is for (optional)</span>
+              <input type="text" name="description" maxLength={500} placeholder="Email, then a call, then a text" />
+            </label>
+            <SubmitButton variant="secondary">Save as template</SubmitButton>
           </ActionForm>
         </section>
       )}

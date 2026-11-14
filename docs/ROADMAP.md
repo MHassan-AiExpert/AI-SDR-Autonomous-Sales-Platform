@@ -2,7 +2,7 @@
 
 Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE ENGINEER | FULL STACK DEVELOPER
 
-Features F01 to F22 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
+Features F01 to F23 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
 
 Every feature here carries the same deliverables as the first twenty: a live migration, agent and web code, database, agent and web tests, a feature report, use cases and test cases, pushed to GitHub.
 
@@ -15,7 +15,7 @@ flowchart LR
   subgraph P1[Phase 1 — Sequence engine]
     F21[F21 CSV import<br/>and bulk actions<br/>DONE]
     F22[F22 Conditional branching<br/>and A/B testing<br/>DONE]
-    F23[F23 Template library]
+    F23[F23 Template library<br/>DONE]
   end
   subgraph P2[Phase 2 — Channels and data]
     F25[F25 Waterfall enrichment]
@@ -34,7 +34,7 @@ flowchart LR
 
 **Why the sequence engine comes first.** Conditional branching changes how every outreach step is chosen. Any channel added before it would have to be rebuilt once branching lands, LinkedIn most of all.
 
-## Phase 1 — Sequence engine
+## Phase 1 — Sequence engine — **COMPLETE**
 
 ### F21. CSV import and bulk actions — **DONE**
 See the [feature report](../reports/F21-csv-import-bulk-actions/feature-report.md).
@@ -61,8 +61,14 @@ Two things changed from the plan, both recorded in the feature report:
 - **"Opened, no reply" needed open tracking,** which `campaignBody` deliberately set to `false` and which produced no `email_opened` event. Open tracking is now a per-campaign switch, off by default; the opens condition is only offered when it is on.
 - **Email sequencing moved out of Instantly.** Instantly owned the email cadence and only sees replies to its own emails, so it could not branch. Each email step now gets its own one-step Instantly campaign, created on demand: Instantly keeps the mailboxes, sending windows and limits, and this system decides which step a lead reaches. A lead-level pause would have been simpler, but no such endpoint could be confirmed in Instantly's published v2 reference, and building on an unverified endpoint was refused.
 
-### F23. Shared template library
-Reusable sequences, snippets and objection answers per workspace, and as agency defaults for new clients.
+### F23. Shared template library — **DONE**
+See the [feature report](../reports/F23-template-library/feature-report.md).
+
+Reusable sequences and snippets per workspace, and as agency defaults for new clients.
+
+One correction from the plan: **objection answers already existed**, in `playbooks.content.objections`, and the AI closer already used them. A second store would have left two places to write the same answer. The real gap was that the reply agent never loaded the playbook at all and drafted answers only from the offer, so that is what was fixed: the team's own objection answers now reach the reply agent too.
+
+**This completes Phase 1.**
 
 ## Phase 2 — Channels and data
 
