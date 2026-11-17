@@ -121,7 +121,7 @@ p { margin: 0; }
 a { color: var(--accent-ink); text-decoration-color: var(--accent-line); text-underline-offset: 3px; }
 a:hover { color: var(--text); }
 .muted, small { color: var(--muted); font-size: 0.92rem; }
-.brand { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 600; font-size: 1.15rem; color: var(--text); text-decoration: none; }
+.brand { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 600; font-size: 1.3rem; letter-spacing: -0.01em; color: var(--text); text-decoration: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .num { font-family: var(--font-display); font-variant-numeric: lining-nums tabular-nums; }
 
@@ -380,11 +380,6 @@ code.pre { display: block; padding: 12px 14px; background: var(--input-bg); bord
 .notify-body { white-space: pre-line; margin: 8px 0; overflow-wrap: anywhere; }
 
 /* White-label brand */
-.brand-mark {
-  width: 34px; height: 34px; flex: none; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 75%, #fff), color-mix(in srgb, var(--accent) 80%, #000));
-  color: var(--accent-text); font-family: var(--font-display); font-size: 1.05rem; font-weight: 600;
-}
 .brand-logo { width: 34px; height: 34px; object-fit: contain; border-radius: 9px; }
 .brand-link { text-decoration: none; }
 
