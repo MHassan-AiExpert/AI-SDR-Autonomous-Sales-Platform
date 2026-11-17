@@ -19,7 +19,7 @@ export const SUMMARY_HOUR = 8;
 
 const TOOL_NAMES: Record<string, string> = {
   apollo: 'Apollo', apify: 'Apify', zerobounce: 'ZeroBounce', instantly: 'Instantly', twilio: 'Twilio', vapi: 'Vapi', slack: 'Slack',
-  hubspot: 'HubSpot', calendly: 'Calendly', stripe: 'Stripe', pandadoc: 'PandaDoc', openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini',
+  hubspot: 'HubSpot', pipedrive: 'Pipedrive', salesforce: 'Salesforce', hunter: 'Hunter', pdl: 'People Data Labs', calendly: 'Calendly', stripe: 'Stripe', pandadoc: 'PandaDoc', openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini',
 };
 const toolName = (t: string) => TOOL_NAMES[t] ?? t;
 const pct = (x: number) => `${(Math.round(x * 1000) / 10).toFixed(1)}%`;

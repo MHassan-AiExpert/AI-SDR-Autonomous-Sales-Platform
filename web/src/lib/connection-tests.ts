@@ -2,7 +2,7 @@
 // tool with the credentials just entered, to prove they work before saving.
 // Runs on the server only; credentials never appear in results or errors.
 
-import { TOOLS, type ToolId } from './integrations';
+import { TOOLS, salesforceHost, type ToolId } from './integrations';
 
 export type TestResult =
   | { ok: true; credits?: number; detail?: Record<string, string> }
@@ -20,6 +20,8 @@ type Probe = {
   read?: (body: unknown) => TestResult;
   /** Statuses that prove the credentials work, for probes built to find nothing. */
   okStatuses?: number[];
+  /** Statuses that mean the credentials were refused, beyond 401 and 403. */
+  rejectedStatuses?: number[];
 };
 
 const bearer = (token: string): RequestInit => ({ headers: { Authorization: `Bearer ${token}` } });
@@ -71,6 +73,26 @@ export const PROBES: Record<ToolId, Probe> = {
   },
   calendly: { url: () => 'https://api.calendly.com/users/me', init: (c) => bearer(c.access_token) },
   hubspot: { url: () => 'https://api.hubapi.com/crm/v3/objects/contacts?limit=1', init: (c) => bearer(c.access_token) },
+  pipedrive: {
+    // The token in a header, never in the URL
+    url: () => 'https://api.pipedrive.com/v1/users/me',
+    init: (c) => ({ headers: { 'x-api-token': c.api_token } }),
+    read: (b) => (isObj(b) && b.success === true ? { ok: true } : { ok: false, error: 'Pipedrive did not accept this API token.' }),
+  },
+  salesforce: {
+    // The client credentials flow on the org's own My Domain host
+    url: (c) => `https://${salesforceHost(c.domain)}/services/oauth2/token`,
+    init: (c) => ({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'client_credentials', client_id: c.client_id, client_secret: c.client_secret }).toString(),
+    }),
+    // Salesforce answers wrong client credentials with 400 invalid_client
+    rejectedStatuses: [400],
+    read: (b) => (isObj(b) && typeof b.access_token === 'string' && b.access_token
+      ? { ok: true }
+      : { ok: false, error: 'Salesforce did not issue an access token. Check that the client credentials flow is enabled with a run-as user.' }),
+  },
   slack: {
     url: () => 'https://slack.com/api/auth.test',
     init: (c) => ({ method: 'POST', ...bearer(c.bot_token) }),
@@ -139,7 +161,7 @@ export async function testConnection(tool: ToolId, credentials: Record<string, s
   if (response.status === 402) {
     return { ok: false, error: `${name} accepted these credentials but the account has no credits left.` };
   }
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401 || response.status === 403 || probe.rejectedStatuses?.includes(response.status)) {
     return { ok: false, error: `${name} rejected these credentials.` };
   }
   if (response.status === 404) {

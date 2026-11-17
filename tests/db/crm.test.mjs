@@ -41,9 +41,10 @@ test('CRM-03 links are read by members only and written only by the agent servic
   await assert.rejects(asUser(db, USERS.ownerA, (tx) => tx.query(`delete from crm_links`)), /permission denied/);
 });
 
-test('CRM-04 one link per record, with HubSpot-shaped ids and fingerprints', async () => {
+test('CRM-04 one link per record, with CRM-shaped ids and fingerprints', async () => {
   await assert.rejects(link(wsA, 'lead', lead, '777'), /duplicate key/);
-  await assert.rejects(link(wsA, 'deal', lead, 'abc'), /check constraint/);
+  await assert.rejects(link(wsA, 'deal', lead, 'not an id!'), /check constraint/);
+  await assert.rejects(link(wsA, 'deal', lead, 'x'.repeat(31)), /check constraint/);
   await assert.rejects(link(wsA, 'deal', lead, '12', 'not-a-hash'), /check constraint/);
   await assert.rejects(link(wsA, 'company', lead, '12'), /check constraint/);
   // Two leads may share one HubSpot contact (contacts merged in HubSpot)
@@ -77,4 +78,34 @@ test('CRM-06 links go when the workspace goes', async () => {
   await link(ws, 'lead', lead, '42');
   await db.query('delete from workspaces where id = $1', [ws]);
   assert.equal((await db.query('select count(*)::int n from crm_links where workspace_id = $1', [ws])).rows[0].n, 0);
+});
+
+// ---------------------------------------------------------------- F28
+
+test('CRM-07 a workspace chooses HubSpot, Pipedrive or Salesforce; HubSpot by default; owners and admins only', async () => {
+  assert.equal((await db.query('select crm_provider from workspaces where id = $1', [wsA])).rows[0].crm_provider, 'hubspot');
+  await assert.rejects(db.query(`update workspaces set crm_provider = 'zoho' where id = $1`, [wsA]), /check constraint/);
+  await asUser(db, USERS.repA, (tx) => tx.query(`update workspaces set crm_provider = 'salesforce' where id = $1`, [wsA]));
+  assert.equal((await db.query('select crm_provider from workspaces where id = $1', [wsA])).rows[0].crm_provider, 'hubspot');
+  await asUser(db, USERS.ownerA, (tx) => tx.query(`update workspaces set crm_provider = 'pipedrive' where id = $1`, [wsA]));
+  assert.equal((await db.query('select crm_provider from workspaces where id = $1', [wsA])).rows[0].crm_provider, 'pipedrive');
+  // Salesforce stage names contain spaces and slashes
+  await db.query(`update workspaces set crm_stage_map = '{"proposal_sent": "Proposal/Price Quote"}' where id = $1`, [wsA]);
+  await db.query(`update workspaces set crm_provider = 'hubspot', crm_stage_map = '{}' where id = $1`, [wsA]);
+});
+
+test('CRM-08 Pipedrive and Salesforce can be connected; links are kept per provider with each one\'s id format', async () => {
+  for (const [tool, secret] of [['pipedrive', { api_token: 'pd-0123456789abcdef' }], ['salesforce', { domain: 'acme.my.salesforce.com', client_id: 'cid-0123456789', client_secret: 'sec-0123456789' }]]) {
+    await asUser(db, USERS.ownerA, (tx) => tx.query('select integration_connect($1, $2, $3::jsonb)', [wsA, tool, JSON.stringify(secret)]));
+  }
+  assert.deepEqual((await db.query(`select tool from integrations where workspace_id = $1 and tool in ('pipedrive', 'salesforce') order by tool`, [wsA])).rows.map((r) => r.tool), ['pipedrive', 'salesforce']);
+  const other = (await db.query(`insert into leads (workspace_id, campaign_id, email, source_channel) values ($1, $2, 'p@x.test', 'apollo') returning id`, [wsA, camp])).rows[0].id;
+  const add = (provider, ext) => asService(db, (tx) => tx.query(
+    `insert into crm_links (workspace_id, provider, record_type, record_id, external_id) values ($1, $2, 'lead', $3, $4)`, [wsA, provider, other, ext]));
+  await add('hubspot', '901');
+  await add('pipedrive', '41');
+  await add('salesforce', '003000000000001AAA');
+  await assert.rejects(add('salesforce', '003000000000002AAA'), /duplicate key/);
+  await assert.rejects(add('zoho', '1'), /check constraint/);
+  assert.equal((await db.query(`select count(*)::int n from crm_links where record_id = $1`, [other])).rows[0].n, 3);
 });

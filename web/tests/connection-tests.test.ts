@@ -21,6 +21,8 @@ const CREDS: Record<ToolId, Record<string, string>> = {
   stripe: { secret_key: 'sk_test_SECRETstripe' },
   hunter: { api_key: 'hunter-SECRET' },
   pdl: { api_key: 'pdl-SECRET' },
+  pipedrive: { api_token: 'pdSECRET0123456789abcdef' },
+  salesforce: { domain: 'acme.my.salesforce.com', client_id: 'cid-SECRET-01', client_secret: 'sf-SECRET-secret' },
 };
 
 const GOOD_BODY: Partial<Record<ToolId, unknown>> = {
@@ -28,6 +30,8 @@ const GOOD_BODY: Partial<Record<ToolId, unknown>> = {
   apollo: { is_logged_in: true },
   zerobounce: { Credits: '2500' },
   twilio: { status: 'active' },
+  pipedrive: { success: true, data: { id: 1 } },
+  salesforce: { access_token: 'sf-token', instance_url: 'https://acme.my.salesforce.com', token_type: 'Bearer' },
   whatsapp: { display_phone_number: '+1 555 0100' },
   slack: { ok: true, team: 'Acme' },
 };
@@ -51,7 +55,7 @@ describe('connection tests', () => {
       apollo: 'api.apollo.io', apify: 'api.apify.com', zerobounce: 'api.zerobounce.net', instantly: 'api.instantly.ai',
       twilio: 'api.twilio.com', vapi: 'api.vapi.ai', whatsapp: 'graph.facebook.com', zoom: 'zoom.us',
       calendly: 'api.calendly.com', hubspot: 'api.hubapi.com', slack: 'slack.com', pandadoc: 'api.pandadoc.com', stripe: 'api.stripe.com',
-      hunter: 'api.hunter.io', pdl: 'api.peopledatalabs.com',
+      hunter: 'api.hunter.io', pdl: 'api.peopledatalabs.com', pipedrive: 'api.pipedrive.com', salesforce: 'acme.my.salesforce.com',
     };
     for (const tool of TOOL_IDS) {
       const f = mockFetch(200, GOOD_BODY[tool] ?? {});
@@ -70,7 +74,7 @@ describe('connection tests', () => {
       const f = mockFetch(200, GOOD_BODY[tool] ?? {});
       await testConnection(tool, CREDS[tool], f as typeof fetch);
       const url = String(f.mock.calls[0][0]);
-      const secretValues = Object.entries(CREDS[tool]).filter(([k]) => !['account_sid', 'phone_number_id', 'account_id'].includes(k)).map(([, v]) => v);
+      const secretValues = Object.entries(CREDS[tool]).filter(([k]) => !['account_sid', 'phone_number_id', 'account_id', 'domain'].includes(k)).map(([, v]) => v);
       for (const s of secretValues) {
         if (tool === 'zerobounce') expect(url).toContain(encodeURIComponent(s));
         else expect(url, tool).not.toContain(s);

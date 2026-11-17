@@ -8,7 +8,7 @@ import { addMemberSchema, firstError, parseSettingsForm, roleSchema, uuidSchema 
 import { parsePlaybook } from '@/lib/closer';
 import { DECISIONS, DECISION_NOTICES, type Decision } from '@/lib/learning';
 import { spendSchema } from '@/lib/analytics';
-import { parseCrmForm } from '@/lib/crm';
+import { PROVIDER_NAMES, crmSwitched, parseCrmForm } from '@/lib/crm';
 import { parseNotifyForm } from '@/lib/notifications';
 import { MAX_ROWS, describeImport } from '@/lib/csv';
 import { LEAD_STAGES, STAGE_LABELS } from '@/lib/campaigns';
@@ -279,22 +279,24 @@ export async function saveCrmSettings(_prev: FormState, form: FormData): Promise
   const parsed = parseCrmForm(form);
   if (!parsed.success) return { error: firstError(parsed.error) };
   const { supabase } = await requireUser();
+  const name = PROVIDER_NAMES[parsed.data.crm_provider];
   if (parsed.data.crm_sync_enabled) {
-    const { data: hub } = await supabase.from('integrations').select('status').eq('workspace_id', workspaceId).eq('tool', 'hubspot').maybeSingle();
-    if (hub?.status !== 'connected') return { error: 'Connect HubSpot in Setup before switching sync on.' };
+    const { data: tool } = await supabase.from('integrations').select('status').eq('workspace_id', workspaceId).eq('tool', parsed.data.crm_provider).maybeSingle();
+    if (tool?.status !== 'connected') return { error: `Connect ${name} in Setup before switching sync on.` };
   }
   const { data, error } = await supabase.from('workspaces').update(parsed.data).eq('id', workspaceId).select('id');
   if (error) return { error: friendlyDbError(error) };
   if (!data?.length) return { error: NO_PERMISSION };
   revalidatePath(`/w/${workspaceId}/settings`);
-  return { notice: parsed.data.crm_sync_enabled ? 'CRM sync is on. Leads, deals and activity go to HubSpot every hour.' : 'CRM sync saved and switched off.' };
+  const switched = crmSwitched(form) ? ` The CRM is now ${name}: check its pipeline and stages below.` : '';
+  return { notice: (parsed.data.crm_sync_enabled ? `CRM sync is on. Leads, deals and activity go to ${name} every hour.` : 'CRM sync saved and switched off.') + switched };
 }
 
 export async function syncCrmNow(_prev: FormState, form: FormData): Promise<FormState> {
   const workspaceId = workspaceIdFrom(form);
   if (!workspaceId) return { error: 'Workspace not found.' };
   const { supabase, user } = await requireUser();
-  const { data: ws } = await supabase.from('workspaces').select('crm_sync_enabled').eq('id', workspaceId).maybeSingle();
+  const { data: ws } = await supabase.from('workspaces').select('crm_sync_enabled, crm_provider').eq('id', workspaceId).maybeSingle();
   if (!ws?.crm_sync_enabled) return { error: 'Switch CRM sync on first.' };
   const { data: campaigns } = await supabase.from('campaigns').select('id').eq('workspace_id', workspaceId).eq('status', 'active');
   if (!campaigns?.length) return { error: 'There are no active campaigns to sync.' };
@@ -306,7 +308,8 @@ export async function syncCrmNow(_prev: FormState, form: FormData): Promise<Form
     if (!error) queued++;
   }
   revalidatePath(`/w/${workspaceId}/settings`);
-  return { notice: queued ? 'HubSpot will be brought up to date within a minute.' : 'A sync is already waiting to run.' };
+  const crm = PROVIDER_NAMES[(ws.crm_provider ?? 'hubspot') as keyof typeof PROVIDER_NAMES] ?? 'Your CRM';
+  return { notice: queued ? `${crm} will be brought up to date within a minute.` : 'A sync is already waiting to run.' };
 }
 
 export async function saveEnrichmentOrder(_prev: FormState, form: FormData): Promise<FormState> {

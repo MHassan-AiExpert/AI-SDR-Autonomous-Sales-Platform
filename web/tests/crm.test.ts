@@ -13,9 +13,9 @@ const DEFAULT_STAGE_MAP_FIELDS = Object.fromEntries(Object.entries(DEFAULT_STAGE
 describe('CRM sync settings', () => {
   test('WCR-01 default stages are not stored; custom ones are', () => {
     const r = parseCrmForm(form());
-    expect(r.success && r.data).toEqual({ crm_sync_enabled: true, crm_sync_scope: 'engaged', crm_pipeline_id: 'default', crm_stage_map: {} });
+    expect(r.success && r.data).toEqual({ crm_sync_enabled: true, crm_provider: 'hubspot', crm_sync_scope: 'engaged', crm_pipeline_id: 'default', crm_stage_map: {} });
     const c = parseCrmForm(form({ crm_pipeline_id: ' 7788 ', stage_won: '1001', stage_lost: '1002', crm_sync_enabled: '__omit' }));
-    expect(c.success && c.data).toEqual({ crm_sync_enabled: false, crm_sync_scope: 'engaged', crm_pipeline_id: '7788', crm_stage_map: { won: '1001', lost: '1002' } });
+    expect(c.success && c.data).toEqual({ crm_sync_enabled: false, crm_provider: 'hubspot', crm_sync_scope: 'engaged', crm_pipeline_id: '7788', crm_stage_map: { won: '1001', lost: '1002' } });
     const blank = parseCrmForm(form({ crm_pipeline_id: '', stage_won: '' }));
     expect(blank.success && blank.data.crm_pipeline_id).toBe('default');
   });

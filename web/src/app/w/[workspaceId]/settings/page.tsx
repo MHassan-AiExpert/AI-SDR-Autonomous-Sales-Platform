@@ -6,7 +6,7 @@ import { CHANNELS, CHANNEL_LABELS } from '@/lib/validation';
 import { rotateWebhookToken, saveCrmSettings, saveEnrichmentOrder, saveNotifySettings, syncCrmNow, updateSettings } from '../actions';
 import { ENRICHMENT_PROVIDERS, PROVIDER_LABELS, describeOrder, matchRateLabel, savedOrder, toStats } from '@/lib/enrichment';
 import { EVENTS, EVENT_LABELS, hourLabel } from '@/lib/notifications';
-import { CRM_SCOPES, CRM_SCOPE_LABELS, DEAL_STAGES, DEAL_STAGE_LABELS, savedStage } from '@/lib/crm';
+import { CONNECT_HELP, CRM_PROVIDERS, CRM_SCOPES, CRM_SCOPE_LABELS, DEAL_STAGE_LABELS, PIPELINE_HELP, PROVIDER_NAMES, asProvider, mappedStages, savedStage } from '@/lib/crm';
 import { inboundWebhookUrl } from '@/lib/texting';
 import { vapiServerUrl } from '@/lib/receptionist';
 
@@ -17,10 +17,12 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
   const { supabase, workspace } = await requireWorkspace(workspaceId);
   const manage = canManageSettings(workspace.role);
   const { data: extra } = await supabase.from('workspaces')
-    .select('slack_channel, notify_slack_events, notify_quiet_start, notify_quiet_end, notify_timezone, bounce_pause_pct, optout_pause_pct, low_credits_threshold, crm_sync_enabled, crm_sync_scope, crm_pipeline_id, crm_stage_map, crm_synced_at').eq('id', workspace.id).maybeSingle();
+    .select('slack_channel, notify_slack_events, notify_quiet_start, notify_quiet_end, notify_timezone, bounce_pause_pct, optout_pause_pct, low_credits_threshold, crm_sync_enabled, crm_sync_scope, crm_pipeline_id, crm_stage_map, crm_synced_at, crm_provider').eq('id', workspace.id).maybeSingle();
+  const crm = asProvider(extra?.crm_provider);
+  const crmName = PROVIDER_NAMES[crm];
   const [{ data: hub }, { data: links }] = await Promise.all([
-    supabase.from('integrations').select('status').eq('workspace_id', workspace.id).eq('tool', 'hubspot').maybeSingle(),
-    supabase.from('crm_links').select('record_type').eq('workspace_id', workspace.id).limit(10000),
+    supabase.from('integrations').select('status').eq('workspace_id', workspace.id).eq('tool', crm).maybeSingle(),
+    supabase.from('crm_links').select('record_type').eq('workspace_id', workspace.id).eq('provider', crm).limit(10000),
   ]);
   const [{ data: orderRow }, { data: finders }, { data: statRows }] = await Promise.all([
     supabase.from('workspaces').select('enrichment_order').eq('id', workspace.id).maybeSingle(),
@@ -201,21 +203,32 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
           <h2 id="crm">CRM sync</h2>
           <span className={extra?.crm_sync_enabled ? 'badge badge-ok' : 'badge'}>{extra?.crm_sync_enabled ? 'On' : 'Off'}</span>
         </div>
-        <p className="muted">Optional. Sends leads to HubSpot contacts (matched by email), deals to the pipeline you choose, and replies, meetings and calls as notes on the contact. Runs every hour and sends only what changed. Deals marked won or lost in HubSpot are closed here too.</p>
-        {!hubConnected ? <p><span className="badge badge-warn">Needs attention</span> HubSpot is {hub?.status === 'expired' || hub?.status === 'error' ? 'not working: reconnect it' : 'not connected yet'} in <a href={`/w/${workspace.id}/setup`}>Setup</a>.</p> : null}
+        <p className="muted">Optional. Sends leads to {crmName} contacts (matched by email), deals to the pipeline you choose, and replies, meetings and calls as {crm === 'salesforce' ? 'completed tasks' : 'notes'} on the contact. Runs every hour and sends only what changed. Deals marked won or lost in {crmName} are closed here too.</p>
+        {!hubConnected ? <p><span className="badge badge-warn">Needs attention</span> {crmName} is {hub?.status === 'expired' || hub?.status === 'error' ? 'not working: reconnect it' : 'not connected yet'} in <a href={`/w/${workspace.id}/setup`}>Setup</a>.</p> : null}
         <dl className="stats">
-          <div><dt>Contacts in HubSpot</dt><dd>{linked('lead')}</dd></div>
-          <div><dt>Deals in HubSpot</dt><dd>{linked('deal')}</dd></div>
+          <div><dt>Contacts in {crmName}</dt><dd>{linked('lead')}</dd></div>
+          <div><dt>{crm === 'salesforce' ? 'Opportunities' : 'Deals'} in {crmName}</dt><dd>{linked('deal')}</dd></div>
           <div><dt>Activity notes</dt><dd>{linked('activity')}</dd></div>
           <div><dt>Last sync</dt><dd>{extra?.crm_synced_at ? `${new Date(extra.crm_synced_at).toUTCString().slice(5, 22)} UTC` : 'Not yet'}</dd></div>
         </dl>
         <ActionForm action={saveCrmSettings} className="stack">
           <input type="hidden" name="workspace_id" value={workspace.id} />
+          <input type="hidden" name="crm_provider_was" value={crm} />
           <fieldset className="stack" disabled={!manage}>
             <legend className="sr-only">CRM sync settings</legend>
+            <fieldset className="row">
+              <legend>Your CRM</legend>
+              {CRM_PROVIDERS.map((p) => (
+                <label key={p} className="choice">
+                  <input type="radio" name="crm_provider" value={p} defaultChecked={crm === p} />
+                  <span>{PROVIDER_NAMES[p]}</span>
+                </label>
+              ))}
+            </fieldset>
+            <p className="muted">Changing CRM keeps what was sent to the old one, and starts the new one from scratch. Its pipeline and stages go back to its defaults.</p>
             <label className="choice">
               <input type="checkbox" name="crm_sync_enabled" defaultChecked={Boolean(extra?.crm_sync_enabled)} />
-              <span><strong>Sync with HubSpot</strong><br />Needs a HubSpot private app token with contacts, deals and notes access.</span>
+              <span><strong>Sync with {crmName}</strong><br />{CONNECT_HELP[crm]}</span>
             </label>
             {CRM_SCOPES.map((s) => (
               <label key={s} className="choice">
@@ -223,16 +236,19 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
                 <span>{CRM_SCOPE_LABELS[s]}</span>
               </label>
             ))}
-            <label className="field">
-              <span>Pipeline id</span>
-              <input name="crm_pipeline_id" type="text" maxLength={64} defaultValue={extra?.crm_pipeline_id ?? 'default'} />
-              <small className="muted">Leave as default for HubSpot&apos;s sales pipeline. For another pipeline, enter its id and the id of each stage below.</small>
-            </label>
+            {crm === 'salesforce' ? <input type="hidden" name="crm_pipeline_id" value="default" /> : (
+              <label className="field">
+                <span>Pipeline {crm === 'pipedrive' ? 'number' : 'id'}</span>
+                <input name="crm_pipeline_id" type="text" maxLength={64} defaultValue={extra?.crm_pipeline_id ?? 'default'} />
+              </label>
+            )}
+            <small className="muted">{PIPELINE_HELP[crm]}</small>
             <div className="grid-2">
-              {DEAL_STAGES.map((s) => (
+              {mappedStages(crm).map((s) => (
                 <label key={s} className="field">
                   <span>{DEAL_STAGE_LABELS[s]}</span>
-                  <input name={`stage_${s}`} type="text" maxLength={64} defaultValue={savedStage(extra?.crm_stage_map, s)} />
+                  <input name={`stage_${s}`} type="text" maxLength={64} defaultValue={savedStage(extra?.crm_stage_map, s, crm)}
+                    placeholder={crm === 'pipedrive' ? 'First stage' : undefined} inputMode={crm === 'pipedrive' ? 'numeric' : undefined} />
                 </label>
               ))}
             </div>

@@ -1,19 +1,29 @@
-// CRM sync (SRS M9): mirrors a campaign's leads, deals and key activity to
-// HubSpot. Leads go to contacts (upserted by email) with a lead status that
-// follows their stage; deals go to the chosen pipeline, associated with the
-// contact; replies, meetings and calls become notes on the contact, once each.
-// A fingerprint of what was sent means unchanged records are skipped. Wins and
-// losses set in HubSpot are read back before anything is pushed, so a change
-// made by a person in the CRM is never overwritten by an older platform value.
+// CRM sync (SRS M9, F18, F28): mirrors a campaign's leads, deals and key
+// activity to the workspace's CRM: HubSpot, Pipedrive or Salesforce. Leads
+// become contacts (matched by email), deals go to the chosen pipeline linked
+// to the contact, and replies, meetings and calls become notes (tasks in
+// Salesforce) on the contact, once each. A fingerprint of what was sent means
+// unchanged records are skipped. Wins and losses set in the CRM are read back
+// before anything is pushed, so a change made by a person in the CRM is never
+// overwritten by an older platform value.
+//
+// The sync is the same for every CRM; each provider supplies a small client
+// (below) that builds its own payloads and talks to its own API.
 
 import { createHash } from 'node:crypto';
 import { ProviderError } from './http.ts';
 import { createDeal, createNote, noteEscape, readDealStages, updateDeal, upsertContacts, type ContactInput, type DealInput } from './sources/hubspot.ts';
+import * as pd from './sources/pipedrive.ts';
+import * as sfc from './sources/salesforce.ts';
 import type { Deps } from './jobs.ts';
 import type { Campaign, Job } from './store.ts';
 import { log } from './log.ts';
 import { notify } from './notify.ts';
 import { slackEscape } from './sources/slack.ts';
+
+export const CRM_PROVIDERS = ['hubspot', 'pipedrive', 'salesforce'] as const;
+export type CrmProvider = (typeof CRM_PROVIDERS)[number];
+export const PROVIDER_NAMES: Record<CrmProvider, string> = { hubspot: 'HubSpot', pipedrive: 'Pipedrive', salesforce: 'Salesforce' };
 
 export const LIMITS = { leads: 200, deals: 100, activities: 200 };
 
@@ -31,13 +41,34 @@ export const DEFAULT_STAGE_MAP: Record<DealStage, string> = {
   negotiation: 'decisionmakerboughtin', won: 'closedwon', lost: 'closedlost',
 };
 
-const STAGE_ID = /^[A-Za-z0-9_-]{1,64}$/;
-export function stageMap(saved: unknown): Record<DealStage, string> {
-  const out = { ...DEFAULT_STAGE_MAP };
+/**
+ * Defaults per CRM. Pipedrive stage ids are numbers that differ per pipeline,
+ * so there is no default: an unmapped open deal goes to the pipeline's first
+ * stage, and won or lost is Pipedrive's deal status, not a stage. Salesforce
+ * uses its standard stage names.
+ */
+export const DEFAULT_STAGES: Record<CrmProvider, Record<DealStage, string>> = {
+  hubspot: DEFAULT_STAGE_MAP,
+  pipedrive: { meeting_booked: '', meeting_held: '', proposal_sent: '', negotiation: '', won: '', lost: '' },
+  salesforce: {
+    meeting_booked: 'Qualification', meeting_held: 'Needs Analysis', proposal_sent: 'Proposal/Price Quote',
+    negotiation: 'Negotiation/Review', won: 'Closed Won', lost: 'Closed Lost',
+  },
+};
+
+export const STAGE_FORMAT: Record<CrmProvider, RegExp> = {
+  hubspot: /^[A-Za-z0-9_-]{1,64}$/,
+  pipedrive: /^[0-9]{1,15}$/,
+  // Salesforce stage names: printable text, no quotes or angle brackets
+  salesforce: /^[^\x00-\x1f"<>]{1,64}$/,
+};
+
+export function stageMap(saved: unknown, provider: CrmProvider = 'hubspot'): Record<DealStage, string> {
+  const out = { ...DEFAULT_STAGES[provider] };
   if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
     for (const s of DEAL_STAGES) {
       const v = (saved as Record<string, unknown>)[s];
-      if (typeof v === 'string' && STAGE_ID.test(v.trim())) out[s] = v.trim();
+      if (typeof v === 'string' && STAGE_FORMAT[provider].test(v.trim())) out[s] = v.trim();
     }
   }
   return out;
@@ -106,8 +137,134 @@ export function noteBody(a: CrmActivity, brand = 'the AI SDR platform'): string 
     `${d.summary ? `<br>${t(d.summary, 1500)}` : ''}<br><em>Logged by ${noteEscape(brand)}</em>`;
 }
 
+/** noteBody as plain text, for CRMs whose activity text is not HTML (Salesforce tasks). */
+export function plainNote(html: string): string {
+  return html.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim();
+}
+
+const NOTE_SUBJECT: Record<CrmActivity['kind'], string> = { reply: 'Reply', meeting: 'Meeting', call: 'AI call' };
+
+// ---------------------------------------------------------------- providers
+
+export type CrmSettings = { pipeline_id: string; map: Record<DealStage, string> };
+
+/** What the sync needs from a CRM. Payloads are fingerprinted, so they must be stable. */
+export type CrmClient = {
+  contactPayload(l: CrmLead, email: string): unknown;
+  upsertContacts(items: { email: string; payload: unknown }[]): Promise<Map<string, string>>;
+  dealPayload(d: CrmDeal): unknown;
+  createDeal(payload: unknown, contactId: string): Promise<string>;
+  updateDeal(id: string, payload: unknown): Promise<void>;
+  /** Won or lost as recorded in the CRM; anything else is absent or 'open'. */
+  outcomes(ids: string[]): Promise<Map<string, 'won' | 'lost' | 'open'>>;
+  createNote(contactId: string, a: CrmActivity, brand?: string): Promise<string>;
+};
+
+export function hubspotClient(token: string, s: CrmSettings, fetchImpl?: typeof fetch): CrmClient {
+  return {
+    contactPayload: (l, email) => ({ email, properties: contactProperties(l) }),
+    upsertContacts: (items) => upsertContacts(token, items.map((x) => x.payload as ContactInput), fetchImpl),
+    dealPayload: (d) => dealInput(d, s.pipeline_id, s.map),
+    createDeal: (p, contact) => createDeal(token, p as DealInput, contact, fetchImpl),
+    updateDeal: (id, p) => updateDeal(token, id, p as DealInput, fetchImpl),
+    outcomes: async (ids) => {
+      const stages = await readDealStages(token, ids, fetchImpl);
+      return new Map([...stages].map(([id, st]) => [id, st === s.map.won ? 'won' : st === s.map.lost ? 'lost' : 'open'] as const));
+    },
+    createNote: (contact, a, brand) => createNote(token, contact, noteBody(a, brand), a.at, fetchImpl),
+  };
+}
+
+/** A Pipedrive deal from ours: won and lost are Pipedrive's deal status; open stages use the mapped stage number. */
+export function pipedriveDeal(d: CrmDeal, s: CrmSettings): pd.PipedriveDeal {
+  const who = d.company ?? d.lead_name ?? 'New customer';
+  const status = d.stage === 'won' ? 'won' : d.stage === 'lost' ? 'lost' : 'open';
+  const stage = status === 'open' && /^[0-9]{1,15}$/.test(s.map[d.stage]) ? Number(s.map[d.stage]) : null;
+  return {
+    title: d.plan_name ? `${who}: ${d.plan_name}` : who,
+    value: d.value_cents === null ? null : d.value_cents / 100, currency: d.currency.toUpperCase(), status,
+    pipeline_id: /^[0-9]{1,15}$/.test(s.pipeline_id) ? Number(s.pipeline_id) : null, stage_id: stage,
+  };
+}
+
+export function pipedrivePerson(l: CrmLead, email: string): pd.PersonInput {
+  return { name: (l.full_name ?? '').trim() || email, email, phone: l.phone, job_title: l.title };
+}
+
+export function pipedriveClient(token: string, s: CrmSettings, fetchImpl?: typeof fetch): CrmClient {
+  return {
+    contactPayload: (l, email) => pipedrivePerson(l, email),
+    upsertContacts: async (items) => {
+      // Pipedrive has no bulk upsert: one search and one write per person
+      const out = new Map<string, string>();
+      for (const x of items) out.set(x.email, await pd.upsertPerson(token, x.payload as pd.PersonInput, fetchImpl));
+      return out;
+    },
+    dealPayload: (d) => pipedriveDeal(d, s),
+    createDeal: (p, person) => pd.createDeal(token, p as pd.PipedriveDeal, person, fetchImpl),
+    updateDeal: (id, p) => pd.updateDeal(token, id, p as pd.PipedriveDeal, fetchImpl),
+    outcomes: async (ids) => {
+      const st = await pd.readDealStatuses(token, ids, fetchImpl);
+      return new Map([...st].map(([id, v]) => [id, v === 'won' ? 'won' : v === 'lost' ? 'lost' : 'open'] as const));
+    },
+    createNote: (person, a, brand) => pd.createNote(token, person, noteBody(a, brand), a.at, fetchImpl),
+  };
+}
+
+/** A Salesforce contact from a lead. LastName is required, so a single name or the email stands in. */
+export function salesforceContact(l: CrmLead, email: string): sfc.ContactFields {
+  const [first, ...rest] = (l.full_name ?? '').trim().split(/\s+/).filter(Boolean);
+  const c: sfc.ContactFields = { LastName: (rest.length ? rest.join(' ') : first ?? email.split('@')[0]).slice(0, 80), Email: email };
+  if (first && rest.length) c.FirstName = first.slice(0, 40);
+  if (l.phone) c.Phone = l.phone.slice(0, 40);
+  if (l.title) c.Title = l.title.slice(0, 128);
+  return c;
+}
+
+/** A Salesforce opportunity. CloseDate is only sent once the deal closed, so an open deal's payload stays stable. */
+export function salesforceOpportunity(d: CrmDeal, s: CrmSettings): sfc.OpportunityFields {
+  const who = d.company ?? d.lead_name ?? 'New customer';
+  const o: sfc.OpportunityFields = { Name: (d.plan_name ? `${who}: ${d.plan_name}` : who).slice(0, 120), StageName: s.map[d.stage] };
+  if (d.value_cents !== null) o.Amount = d.value_cents / 100;
+  if (d.closed_at) o.CloseDate = d.closed_at.toISOString().slice(0, 10);
+  return o;
+}
+
+export function salesforceClient(auth: sfc.SfAuth, s: CrmSettings, fetchImpl?: typeof fetch): CrmClient {
+  return {
+    contactPayload: (l, email) => salesforceContact(l, email),
+    upsertContacts: async (items) => {
+      const { ids, errors } = await sfc.upsertContacts(auth, items.map((x) => x.payload as sfc.ContactFields), fetchImpl);
+      if (errors.length) log('warn', 'Salesforce did not save some contacts', { count: errors.length, first: errors[0] });
+      return ids;
+    },
+    dealPayload: (d) => salesforceOpportunity(d, s),
+    createDeal: async (p, contact) => {
+      const r = await sfc.createOpportunity(auth, p as sfc.OpportunityFields, contact, fetchImpl);
+      if (r.roleError) log('warn', 'Salesforce opportunity saved without its contact role', { error: r.roleError });
+      return r.id;
+    },
+    updateDeal: (id, p) => sfc.updateOpportunity(auth, id, p as sfc.OpportunityFields, fetchImpl),
+    outcomes: (ids) => sfc.readOutcomes(auth, ids, fetchImpl),
+    createNote: (contact, a, brand) => sfc.createTask(auth, contact, `${NOTE_SUBJECT[a.kind]} (logged by ${brand ?? 'the AI SDR platform'})`, plainNote(noteBody(a, brand)), a.at, fetchImpl),
+  };
+}
+
+/** The client for the workspace's CRM, or why there is none. */
+export async function crmClient(deps: Deps, ws: string, provider: CrmProvider, s: CrmSettings): Promise<CrmClient | string> {
+  const name = PROVIDER_NAMES[provider];
+  const connected = await deps.store.connectedTools(ws);
+  if (!connected.has(provider)) return `${name} is not connected`;
+  const secret = await deps.store.secret(ws, provider);
+  if (provider === 'hubspot') return secret?.access_token ? hubspotClient(secret.access_token, s, deps.fetchImpl) : `${name} is not connected`;
+  if (provider === 'pipedrive') return secret?.api_token ? pipedriveClient(secret.api_token, s, deps.fetchImpl) : `${name} is not connected`;
+  if (!secret?.domain || !secret.client_id || !secret.client_secret) return `${name} is not connected`;
+  return salesforceClient(await sfc.getToken({ domain: secret.domain, client_id: secret.client_id, client_secret: secret.client_secret }, deps.fetchImpl), s, deps.fetchImpl);
+}
+
 type Stats = {
-  contacts_sent: number; contacts_unchanged: number; contacts_without_email: number; deals_created: number; deals_updated: number;
+  crm: string; contacts_sent: number; contacts_unchanged: number; contacts_without_email: number; deals_created: number; deals_updated: number;
   deals_unchanged: number; deals_without_contact: number; notes_created: number; closed_from_crm: number; rate_limited: boolean;
 };
 
@@ -116,100 +273,102 @@ export async function runCrmSync(deps: Deps, job: Job, campaign: Campaign) {
   const { store, fetchImpl } = deps;
   const settings = await store.crmSettings(ws);
   if (!settings?.enabled) return { skipped: 'CRM sync is switched off' };
-  const connected = await store.connectedTools(ws);
-  if (!connected.has('hubspot')) return { skipped: 'HubSpot is not connected' };
-  const token = (await store.secret(ws, 'hubspot'))?.access_token;
-  if (!token) return { skipped: 'HubSpot is not connected' };
-  const map = stageMap(settings.stage_map);
+  const provider: CrmProvider = (CRM_PROVIDERS as readonly string[]).includes(settings.provider) ? settings.provider : 'hubspot';
+  const name = PROVIDER_NAMES[provider];
+  const s: CrmSettings = { pipeline_id: settings.pipeline_id, map: stageMap(settings.stage_map, provider) };
   const stats: Stats = {
-    contacts_sent: 0, contacts_unchanged: 0, contacts_without_email: 0, deals_created: 0, deals_updated: 0,
+    crm: name, contacts_sent: 0, contacts_unchanged: 0, contacts_without_email: 0, deals_created: 0, deals_updated: 0,
     deals_unchanged: 0, deals_without_contact: 0, notes_created: 0, closed_from_crm: 0, rate_limited: false,
   };
+  const reject = provider === 'hubspot' ? 'HubSpot rejected the access token. Reconnect HubSpot in Setup.' : `${name} rejected the stored credentials. Reconnect ${name} in Setup.`;
 
   try {
-    // 1. Wins and losses recorded in HubSpot come back first
-    const linked = await store.crmLinkedDeals(ws, campaign.id);
+    const client = await crmClient(deps, ws, provider, s);
+    if (typeof client === 'string') return { skipped: client };
+
+    // 1. Wins and losses recorded in the CRM come back first
+    const linked = await store.crmLinkedDeals(ws, campaign.id, provider);
     if (linked.length) {
-      const stages = await readDealStages(token, linked.map((x) => x.external_id), fetchImpl);
+      const outcomes = await client.outcomes(linked.map((x) => x.external_id));
       for (const x of linked) {
-        const hsStage = stages.get(x.external_id);
-        const ours = hsStage === map.won ? 'won' : hsStage === map.lost ? 'lost' : null;
-        const closed = ours && ours !== x.stage ? await store.closeDealFromCrm(ws, x.record_id, ours) : null;
+        const o = outcomes.get(x.external_id);
+        const ours = o === 'won' || o === 'lost' ? o : null;
+        const closed = ours && ours !== x.stage ? await store.closeDealFromCrm(ws, x.record_id, ours, name) : null;
         if (closed && ours) {
           stats.closed_from_crm++;
           const link = deps.appUrl ? ` <${deps.appUrl}/w/${ws}/leads/${closed.leadId}|Open lead>` : '';
           await notify(store, ws, {
             event: ours === 'won' ? 'deal_won' : 'deal_lost', leadId: closed.leadId, campaignId: campaign.id, dedupe: `${ours}:${closed.leadId}`,
-            slack: `${ours === 'won' ? ':tada: *Deal won*' : ':small_red_triangle_down: *Deal lost*'}: ${slackEscape(closed.name)} was marked ${ours} in HubSpot.${link}`,
+            slack: `${ours === 'won' ? ':tada: *Deal won*' : ':small_red_triangle_down: *Deal lost*'}: ${slackEscape(closed.name)} was marked ${ours} in ${name}.${link}`,
           }, fetchImpl);
         }
       }
     }
 
     // 2. Contacts
-    const leads = await store.crmLeads(ws, campaign.id, settings.scope, LIMITS.leads);
-    const links = await store.crmLinks(ws, 'lead', leads.map((l) => l.id));
-    const toSend: { lead: CrmLead; input: ContactInput; fp: string }[] = [];
+    const leads = await store.crmLeads(ws, campaign.id, settings.scope, LIMITS.leads, provider);
+    const links = await store.crmLinks(ws, 'lead', leads.map((l) => l.id), provider);
+    const toSend: { lead: CrmLead; email: string; payload: unknown; fp: string }[] = [];
     for (const l of leads) {
       const email = l.email?.trim().toLowerCase();
       if (!email || !EMAIL.test(email)) { stats.contacts_without_email++; continue; }
-      const properties = contactProperties(l);
-      const fp = fingerprint({ email, properties });
+      const payload = client.contactPayload(l, email);
+      const fp = fingerprint(payload);
       if (links.get(l.id)?.fingerprint === fp) { stats.contacts_unchanged++; continue; }
-      toSend.push({ lead: l, input: { email, properties }, fp });
+      toSend.push({ lead: l, email, payload, fp });
     }
     if (toSend.length) {
-      const ids = await upsertContacts(token, toSend.map((x) => x.input), fetchImpl);
+      const ids = await client.upsertContacts(toSend.map((x) => ({ email: x.email, payload: x.payload })));
       for (const x of toSend) {
-        const id = ids.get(x.input.email);
+        const id = ids.get(x.email);
         if (!id) continue;
-        await store.saveCrmLink(ws, 'lead', x.lead.id, id, x.fp);
+        await store.saveCrmLink(ws, 'lead', x.lead.id, id, x.fp, provider);
         stats.contacts_sent++;
       }
     }
 
     // 3. Deals
-    const deals = await store.crmDeals(ws, campaign.id, LIMITS.deals);
-    const contactIds = await store.crmLinks(ws, 'lead', deals.map((d) => d.lead_id));
-    const dealLinks = await store.crmLinks(ws, 'deal', deals.map((d) => d.id));
+    const deals = await store.crmDeals(ws, campaign.id, LIMITS.deals, provider);
+    const contactIds = await store.crmLinks(ws, 'lead', deals.map((d) => d.lead_id), provider);
+    const dealLinks = await store.crmLinks(ws, 'deal', deals.map((d) => d.id), provider);
     for (const d of deals) {
       const contact = contactIds.get(d.lead_id)?.external_id;
       if (!contact) { stats.deals_without_contact++; continue; }
-      const input = dealInput(d, settings.pipeline_id, map);
-      const fp = fingerprint(input);
+      const payload = client.dealPayload(d);
+      const fp = fingerprint(payload);
       const link = dealLinks.get(d.id);
       if (link?.fingerprint === fp) { stats.deals_unchanged++; continue; }
       if (link) {
-        await updateDeal(token, link.external_id, input, fetchImpl);
+        await client.updateDeal(link.external_id, payload);
         stats.deals_updated++;
-        await store.saveCrmLink(ws, 'deal', d.id, link.external_id, fp);
+        await store.saveCrmLink(ws, 'deal', d.id, link.external_id, fp, provider);
       } else {
-        const id = await createDeal(token, input, contact, fetchImpl);
+        const id = await client.createDeal(payload, contact);
         stats.deals_created++;
-        await store.saveCrmLink(ws, 'deal', d.id, id, fp);
+        await store.saveCrmLink(ws, 'deal', d.id, id, fp, provider);
       }
     }
 
-    // 4. Activity notes, once each, for contacts already in HubSpot
-    const acts = await store.crmActivities(ws, campaign.id, LIMITS.activities);
+    // 4. Activity notes, once each, for contacts already in the CRM
+    const acts = await store.crmActivities(ws, campaign.id, LIMITS.activities, provider);
     const brand = acts.length ? await store.brandName(ws) : null;
-    const actContacts = await store.crmLinks(ws, 'lead', [...new Set(acts.map((a) => a.lead_id))]);
+    const actContacts = await store.crmLinks(ws, 'lead', [...new Set(acts.map((a) => a.lead_id))], provider);
     for (const a of acts) {
       const contact = actContacts.get(a.lead_id)?.external_id;
       if (!contact) continue;
-      const id = await createNote(token, contact, noteBody(a, brand ?? undefined), a.at, fetchImpl);
-      await store.saveCrmLink(ws, 'activity', a.id, id, null);
+      const id = await client.createNote(contact, a, brand ?? undefined);
+      await store.saveCrmLink(ws, 'activity', a.id, id, null, provider);
       stats.notes_created++;
     }
   } catch (err) {
     if (err instanceof ProviderError && (err.status === 401 || err.status === 403)) {
-      await store.markToolError(ws, 'hubspot', 'expired', 'HubSpot rejected the access token. Reconnect HubSpot in Setup.');
-      throw new CrmError('HubSpot rejected the access token. Reconnect HubSpot in Setup.');
+      await store.markToolError(ws, provider, 'expired', reject);
+      throw new CrmError(reject);
     }
     if (err instanceof ProviderError && err.status === 429) {
       // Whatever was saved stays saved; the rest goes in the next hourly run
       stats.rate_limited = true;
-      log('warn', 'HubSpot rate limit reached, the rest syncs next run', { job: job.id });
+      log('warn', `${name} rate limit reached, the rest syncs next run`, { job: job.id });
       return stats;
     }
     throw err;

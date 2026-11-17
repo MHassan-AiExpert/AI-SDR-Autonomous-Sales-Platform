@@ -27,7 +27,7 @@ export async function requestJson(
   provider: string,
   url: string,
   init: RequestInit,
-  options: { fetchImpl?: Fetch; timeoutMs?: number } = {},
+  options: { fetchImpl?: Fetch; timeoutMs?: number; allowEmpty?: boolean } = {},
 ): Promise<unknown> {
   const fetchImpl = options.fetchImpl ?? fetch;
   let response: Response;
@@ -43,6 +43,8 @@ export async function requestJson(
     throw new ProviderError(provider, null, timedOut ? `${provider} did not respond in time` : `Could not reach ${provider}`);
   }
   if (!response.ok) throw new ProviderError(provider, response.status, describeStatus(provider, response.status));
+  // Some APIs answer a successful update with 204 and no body
+  if (options.allowEmpty && response.status === 204) return null;
   try {
     return await response.json();
   } catch {

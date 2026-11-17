@@ -6,7 +6,7 @@ import type { Channel } from './validation';
 export const TOOL_IDS = [
   'openai', 'anthropic', 'gemini', 'apollo', 'apify', 'zerobounce', 'instantly', 'twilio',
   'vapi', 'whatsapp', 'zoom', 'calendly', 'hubspot', 'slack', 'pandadoc', 'stripe',
-  'hunter', 'pdl',
+  'hunter', 'pdl', 'pipedrive', 'salesforce',
 ] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
@@ -29,6 +29,13 @@ export type Tool = {
 };
 
 const KEY = /^[\x21-\x7e]{8,512}$/; // printable, no spaces
+/** A Salesforce My Domain host, production or sandbox, optionally typed as a URL. */
+export const SALESFORCE_DOMAIN = /^(https:\/\/)?[a-z0-9-]{1,80}(\.(sandbox|develop|scratch))?\.my\.salesforce\.com\/?$/i;
+
+/** The bare host from an accepted My Domain value. */
+export function salesforceHost(value: string): string {
+  return value.trim().toLowerCase().replace(/^https:\/\//, '').replace(/\/$/, '');
+}
 
 export const TOOLS: Record<ToolId, Tool> = {
   openai: {
@@ -105,6 +112,23 @@ export const TOOLS: Record<ToolId, Tool> = {
     id: 'hubspot', name: 'HubSpot', purpose: 'Optional sync to your existing CRM',
     fields: [{ name: 'access_token', label: 'Private app access token', secret: true, pattern: KEY }],
     docsUrl: 'https://developers.hubspot.com/docs/api/private-apps',
+  },
+  pipedrive: {
+    id: 'pipedrive', name: 'Pipedrive', purpose: 'Optional sync to your existing CRM',
+    fields: [{ name: 'api_token', label: 'API token', secret: true, pattern: /^[A-Za-z0-9]{20,64}$/, help: 'Found under Personal preferences, API, in Pipedrive' }],
+    docsUrl: 'https://pipedrive.readme.io/docs/how-to-find-the-api-token',
+  },
+  salesforce: {
+    id: 'salesforce', name: 'Salesforce', purpose: 'Optional sync to your existing CRM',
+    fields: [
+      {
+        name: 'domain', label: 'My Domain', secret: false, pattern: SALESFORCE_DOMAIN,
+        help: 'Your org\'s My Domain, such as acme.my.salesforce.com (Setup, My Domain)',
+      },
+      { name: 'client_id', label: 'Consumer key', secret: false, pattern: KEY, help: 'From an external client app or connected app with the client credentials flow enabled and a run-as user' },
+      { name: 'client_secret', label: 'Consumer secret', secret: true, pattern: KEY },
+    ],
+    docsUrl: 'https://developer.salesforce.com/blogs/2023/03/using-the-client-credentials-flow-for-easier-api-authentication',
   },
   slack: {
     id: 'slack', name: 'Slack', purpose: 'Hot-lead, handoff and deal alerts for your team',
@@ -215,7 +239,7 @@ const STEP_DEFS: { id: string; title: string; description: string; tools: ToolId
   { id: 'alerts', title: 'Team alerts', description: 'Hot leads, handoffs and won deals in Slack.', tools: ['slack'], needs: () => true },
   { id: 'agreements', title: 'Agreements', description: 'Sends the agreement for e-signature when a deal is won.', tools: ['pandadoc'], needs: (i) => i.aiCloserEnabled },
   { id: 'payments', title: 'Payments', description: 'Sends payment links and invoices for won deals.', tools: ['stripe'], needs: (i) => i.aiCloserEnabled },
-  { id: 'crm', title: 'External CRM', description: 'Optional. The built-in sales workspace already keeps every lead and deal.', tools: ['hubspot'], needs: () => false },
+  { id: 'crm', title: 'External CRM', description: 'Optional. The built-in sales workspace already keeps every lead and deal.', tools: ['hubspot', 'pipedrive', 'salesforce'], needs: () => false },
 ];
 
 const CHECKLIST_DEFS: { id: string; title: string; description: string; needs: (i: PlanInput) => boolean }[] = [

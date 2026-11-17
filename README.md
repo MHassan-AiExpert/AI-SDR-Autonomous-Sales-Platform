@@ -73,7 +73,7 @@ flowchart TB
         E3["Twilio<br/>calls and SMS"]
         E4["WhatsApp<br/>via Twilio"]
         E5["Zoom<br/>Recall.ai bot"]
-        E6["CRM<br/>HubSpot"]
+        E6["CRM<br/>HubSpot, Pipedrive, Salesforce"]
         E7["Calendar<br/>Calendly"]
         E8["Slack<br/>notifications"]
         E9["E-signature<br/>PandaDoc"]
@@ -232,7 +232,7 @@ Every module, with its numbered functional requirements, is defined in the [Soft
 | WhatsApp | WhatsApp Business Platform through Twilio (approved senders and templates) |
 | Meetings | Zoom API, Recall.ai meeting bot, Calendly |
 | Deals | PandaDoc (e-signature), Stripe (payments) |
-| CRM and alerts | HubSpot, Slack |
+| CRM and alerts | HubSpot, Pipedrive, Salesforce, Slack |
 | Auth, pooling and cache | Supabase Auth, Supavisor, Redis (Upstash) |
 | Observability | Better Stack (uptime, logs, on-call), Sentry, Langfuse |
 | Delivery | GitHub Actions, Docker Compose, Vercel, Cloudflare |
@@ -401,6 +401,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F25](reports/F25-waterfall-enrichment/feature-report.md) | Waterfall enrichment: Apollo, Hunter and People Data Labs in a chosen order, stopping at the first hit, with match rates per provider | 29 passed |
 | [F26](reports/F26-signals-agent/feature-report.md) | Signals agent (agent #17): funding, news, hiring, technology and job changes, plus a signal address for intent and social tools; a sequence step can re-open a finished conversation with the signal as its opening line | 43 passed |
 | [F27](reports/F27-deliverability-dashboard/feature-report.md) | Deliverability dashboard: SPF, DKIM, DMARC, MX and domain blocklist checks per sending domain with fixes, Instantly mailbox and warm-up health, per-mailbox sends, bounces and replies, and alerts on new problems | 37 passed |
+| [F28](reports/F28-salesforce-pipedrive/feature-report.md) | Salesforce and Pipedrive: choose HubSpot, Pipedrive or Salesforce for CRM sync; contacts, deals, activity and won or lost read back, each CRM's API verified first | 29 passed |
 
 ---
 
