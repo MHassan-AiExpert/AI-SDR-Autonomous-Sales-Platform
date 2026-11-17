@@ -6,6 +6,7 @@ import postgres from 'postgres';
 import type { CampaignPlan } from './plan.ts';
 import { nextStage } from './replies.ts';
 import { identityKeys, type ExistingKeys, type LeadCandidate, type Suppressions } from './leads.ts';
+import type { DomainResult, Issue, MailboxHealth } from './deliverability.ts';
 
 export type Sql = postgres.Sql;
 
@@ -1840,6 +1841,77 @@ export class Store {
         and (s.lead_id = l.id or (s.lead_id is null and s.company_id = l.company_id))
       returning 1`;
     return rows.length;
+  }
+
+  // ---------------------------------------------------------------- deliverability
+
+  /**
+   * Claims the daily deliverability check: true at most once a day per
+   * workspace, and never twice at the same moment. Claiming before the work
+   * means a check that fails is retried tomorrow, not every 15 minutes.
+   */
+  async claimDeliverability(workspaceId: string): Promise<boolean> {
+    const rows = await this.sql`
+      update workspaces set deliverability_checked_at = now()
+      where id = ${workspaceId}::uuid and (deliverability_checked_at is null or deliverability_checked_at < now() - interval '23 hours 45 minutes')
+      returning id`;
+    return rows.length > 0;
+  }
+
+  /** Every mailbox address the workspace's campaigns send from. */
+  async campaignSendingAccounts(workspaceId: string): Promise<string[]> {
+    const rows = await this.sql`
+      select distinct lower(trim(a)) as email from campaigns c, jsonb_array_elements_text(c.sending_accounts) a
+      where c.workspace_id = ${workspaceId}::uuid and c.status <> 'archived'`;
+    return rows.map((r) => r.email as string);
+  }
+
+  async sendingDomains(workspaceId: string) {
+    return (await this.sql`
+      select domain, dkim_selector, issues from sending_domains where workspace_id = ${workspaceId}::uuid`) as unknown as
+      { domain: string; dkim_selector: string | null; issues: Issue[] }[];
+  }
+
+  async saveDomainCheck(workspaceId: string, r: DomainResult) {
+    await this.sql`
+      insert into sending_domains (workspace_id, domain, spf_status, spf_record, spf_lookups, dkim_status, dkim_found, dmarc_status, dmarc_policy,
+        dmarc_record, mx_status, blocklists, issues, score, checked_at)
+      values (${workspaceId}::uuid, ${r.domain}, ${r.spf_status}, ${r.spf_record}, ${r.spf_lookups}, ${r.dkim_status}, ${r.dkim_found}, ${r.dmarc_status},
+        ${r.dmarc_policy}, ${r.dmarc_record}, ${r.mx_status}, ${this.sql.json(r.blocklists as unknown as postgres.JSONValue)},
+        ${this.sql.json(r.issues as unknown as postgres.JSONValue)}, ${r.score}, now())
+      on conflict (workspace_id, domain) do update set
+        spf_status = excluded.spf_status, spf_record = excluded.spf_record, spf_lookups = excluded.spf_lookups,
+        dkim_status = excluded.dkim_status, dkim_found = excluded.dkim_found, dmarc_status = excluded.dmarc_status,
+        dmarc_policy = excluded.dmarc_policy, dmarc_record = excluded.dmarc_record, mx_status = excluded.mx_status,
+        blocklists = excluded.blocklists, issues = excluded.issues, score = excluded.score, checked_at = excluded.checked_at`;
+  }
+
+  /** Domains nobody sends from any more stop being checked and shown. */
+  async dropSendingDomains(workspaceId: string, keep: string[]): Promise<number> {
+    const rows = await this.sql`
+      delete from sending_domains where workspace_id = ${workspaceId}::uuid and not (domain = any(${keep}::text[])) returning 1`;
+    return rows.length;
+  }
+
+  async mailboxes(workspaceId: string) {
+    return (await this.sql`
+      select email, domain, provider, status, warmup_status, warmup_score, daily_limit, setup_pending from mailboxes
+      where workspace_id = ${workspaceId}::uuid`) as unknown as MailboxHealth[];
+  }
+
+  /** Replaces the stored mailboxes with what Instantly listed; `complete` false keeps ones not seen. */
+  async saveMailboxes(workspaceId: string, boxes: MailboxHealth[], complete: boolean) {
+    await this.sql.begin(async (tx) => {
+      for (const m of boxes) {
+        await tx`
+          insert into mailboxes (workspace_id, email, domain, provider, status, warmup_status, warmup_score, daily_limit, setup_pending, checked_at)
+          values (${workspaceId}::uuid, ${m.email}, ${m.domain}, ${m.provider}, ${m.status}, ${m.warmup_status}, ${m.warmup_score}, ${m.daily_limit}, ${m.setup_pending}, now())
+          on conflict (workspace_id, email) do update set domain = excluded.domain, provider = excluded.provider, status = excluded.status,
+            warmup_status = excluded.warmup_status, warmup_score = excluded.warmup_score, daily_limit = excluded.daily_limit,
+            setup_pending = excluded.setup_pending, checked_at = excluded.checked_at`;
+      }
+      if (complete) await tx`delete from mailboxes where workspace_id = ${workspaceId}::uuid and not (email = any(${boxes.map((m) => m.email)}::text[]))`;
+    });
   }
 
   // ---------------------------------------------------------------- templates

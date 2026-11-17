@@ -90,3 +90,25 @@ export function splitName(full: string | null): { firstName?: string; lastName?:
   const parts = full.replace(/^(dr|mr|mrs|ms|prof)\.?\s+/i, '').trim().split(/\s+/);
   return { firstName: parts[0], lastName: parts.slice(1).join(' ') || undefined };
 }
+
+/**
+ * Every mailbox connected to the Instantly workspace (GET /accounts), page by
+ * page. Instantly pages with `starting_after` and returns `next_starting_after`;
+ * `items` is read, and a bare array accepted, so a change of envelope does not
+ * read as "no mailboxes". At most `maxPages` pages of 100.
+ */
+export async function listAccounts(key: string, fetchImpl?: Fetch, maxPages = 10): Promise<{ accounts: Record<string, unknown>[]; complete: boolean }> {
+  const accounts: Record<string, unknown>[] = [];
+  let after: string | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const q = new URLSearchParams({ limit: '100' });
+    if (after) q.set('starting_after', after);
+    const body = await requestJson('Instantly', `${BASE}/accounts?${q}`, { method: 'GET', headers: { Authorization: `Bearer ${key}` } }, { fetchImpl });
+    const items = Array.isArray(body) ? body : isObject(body) && Array.isArray(body.items) ? body.items : null;
+    if (!items) throw new Error('Instantly returned mailboxes in a shape that was not recognised');
+    accounts.push(...items.filter(isObject));
+    after = isObject(body) ? str(body.next_starting_after) : undefined;
+    if (!after || !items.length) return { accounts, complete: true };
+  }
+  return { accounts, complete: false };
+}

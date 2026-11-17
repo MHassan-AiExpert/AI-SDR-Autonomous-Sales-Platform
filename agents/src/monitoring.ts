@@ -6,11 +6,13 @@
 //   the last 7 days): the campaign's emails are paused and the team is told.
 // * An integration that stopped working, or whose credits run low.
 // * Tasks stuck in the queue for more than 15 minutes.
+// * Once a day, sending domains and mailboxes are checked (F27).
 // * Alerts held during quiet hours are posted once they end.
 
 import { flushHeld, localDay, localHour, notify } from './notify.ts';
 import type { Deps } from './jobs.ts';
 import { log } from './log.ts';
+import { runDeliverability } from './deliverabilityRun.ts';
 
 export const MIN_SENT = 50;
 export const SUMMARY_HOUR = 8;
@@ -47,7 +49,7 @@ export function summaryText(name: string, a: { leads: number; emails: number; re
 
 export async function monitorWorkspace(deps: Deps, ws: string, now = new Date()) {
   const { store, fetchImpl } = deps;
-  const stats = { paused: 0, integration_alerts: 0, credit_alerts: 0, queue_alerts: 0, summary: false, held_sent: 0 };
+  const stats = { paused: 0, integration_alerts: 0, credit_alerts: 0, queue_alerts: 0, summary: false, held_sent: 0, deliverability_alerts: 0 };
   const settings = await store.monitorSettings(ws);
   const notifySettings = await store.notifySettings(ws);
   if (!settings || !notifySettings) return stats;
@@ -103,7 +105,15 @@ export async function monitorWorkspace(deps: Deps, ws: string, now = new Date())
     stats.summary = r.status !== 'duplicate';
   }
 
-  // 5. Alerts held during quiet hours
+  // 5. Deliverability, once a day: domain set-up, blocklists, mailbox health.
+  // Isolated so a DNS or Instantly problem never stops the rest of the sweep.
+  try {
+    stats.deliverability_alerts = (await runDeliverability(deps, ws, day, now)).alerts;
+  } catch (err) {
+    log('error', 'deliverability check failed', { workspace_id: ws, error: err instanceof Error ? err.message : 'unknown' });
+  }
+
+  // 6. Alerts held during quiet hours
   stats.held_sent = await flushHeld(store, ws, notifySettings, fetchImpl, now);
   return stats;
 }
@@ -116,7 +126,7 @@ export async function runMonitoring(deps: Deps, limit = 10, now = new Date()) {
     try {
       const s = await monitorWorkspace(deps, ws, now);
       checked++;
-      if (s.paused || s.integration_alerts || s.credit_alerts || s.queue_alerts) log('info', 'monitoring raised alerts', { workspace_id: ws, ...s });
+      if (s.paused || s.integration_alerts || s.credit_alerts || s.queue_alerts || s.deliverability_alerts) log('info', 'monitoring raised alerts', { workspace_id: ws, ...s });
     } catch (err) {
       log('error', 'monitoring failed', { workspace_id: ws, error: err instanceof Error ? err.message : 'unknown' });
     }

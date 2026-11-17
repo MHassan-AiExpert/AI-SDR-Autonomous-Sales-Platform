@@ -55,6 +55,7 @@ export default async function WorkspaceLayout({
         <Link href={`${base}/playbook`}>Playbook</Link>
         <Link href={`${base}/templates`}>Templates</Link>
         <Link href={`${base}/signals`}>Signals</Link>
+        <Link href={`${base}/deliverability`}>Deliverability</Link>
         <Link href={`${base}/learning`}>Learning</Link>
         <Link href={`${base}/meetings`}>Meetings</Link>
         <Link href={`${base}/setup`}>Setup</Link>

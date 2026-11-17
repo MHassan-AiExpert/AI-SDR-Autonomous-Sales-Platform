@@ -400,6 +400,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F23](reports/F23-template-library/feature-report.md) | Shared template library for sequences and snippets, with agency defaults for new client workspaces | 37 passed |
 | [F25](reports/F25-waterfall-enrichment/feature-report.md) | Waterfall enrichment: Apollo, Hunter and People Data Labs in a chosen order, stopping at the first hit, with match rates per provider | 29 passed |
 | [F26](reports/F26-signals-agent/feature-report.md) | Signals agent (agent #17): funding, news, hiring, technology and job changes, plus a signal address for intent and social tools; a sequence step can re-open a finished conversation with the signal as its opening line | 43 passed |
+| [F27](reports/F27-deliverability-dashboard/feature-report.md) | Deliverability dashboard: SPF, DKIM, DMARC, MX and domain blocklist checks per sending domain with fixes, Instantly mailbox and warm-up health, per-mailbox sends, bounces and replies, and alerts on new problems | 37 passed |
 
 ---
 

@@ -25,10 +25,11 @@ import { runAudits as audit } from './audit.ts';
 import { runLearning as learn } from './learning.ts';
 import { runCrmSync as syncCrm, CrmError } from './crm.ts';
 import { runMonitoring } from './monitoring.ts';
+import type { Dns } from './deliverability.ts';
 import { notify } from './notify.ts';
 import type { Resolver } from './sources/website.ts';
 
-export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; scheduleHours?: number; appUrl?: string; webhookBaseUrl?: string; voiceModel?: string; pandadocPauseMs?: number };
+export type Deps = { store: Store; models: ModelConfig; fetchImpl?: Fetch; resolve?: Resolver; dns?: Dns; scheduleHours?: number; appUrl?: string; webhookBaseUrl?: string; voiceModel?: string; pandadocPauseMs?: number };
 
 export class JobError extends Error {}
 

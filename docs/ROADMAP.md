@@ -2,7 +2,7 @@
 
 Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE ENGINEER | FULL STACK DEVELOPER
 
-Features F01 to F23, F25 and F26 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
+Features F01 to F23 and F25 to F27 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
 
 Every feature here carries the same deliverables as the first twenty: a live migration, agent and web code, database, agent and web tests, a feature report, use cases and test cases, pushed to GitHub.
 
@@ -23,7 +23,7 @@ flowchart LR
     F24[F24 LinkedIn<br/>PARKED]
   end
   subgraph P3[Phase 3 — Platform]
-    F27[F27 Deliverability]
+    F27[F27 Deliverability<br/>DONE]
     F28[F28 Salesforce<br/>and Pipedrive]
     F29[F29 Public API]
     F30[F30 Visitor identification]
@@ -101,7 +101,9 @@ Only the built-in tier is required. The paid and social tiers connect like any o
 
 ## Phase 3 — Platform
 
-### F27. Deliverability dashboard
+### F27. Deliverability dashboard — **DONE**
+See the [feature report](../reports/F27-deliverability-dashboard/feature-report.md).
+
 SPF, DKIM and DMARC checks per sending domain, blocklist monitoring, per-mailbox volume and health. Automatic pausing on bounce and opt-out spikes already exists (F19).
 
 ### F28. Salesforce and Pipedrive
