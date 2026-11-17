@@ -195,6 +195,7 @@ sequenceDiagram
 - **Deliverability dashboard:** SPF, DKIM, DMARC, MX and blocklist checks per sending domain, with mailbox and warm-up health
 - **Public API and signed webhooks** for Zapier, Make, n8n or a team's own systems
 - **White-label mode** with custom domain, branding, agency console and per-client billing
+- **Premium interface:** Midnight & Brass design system with a per-person Dark / Light switch, a grouped sidebar for every page, a "Needs your attention" home screen and agency colours that keep buttons readable
 
 ---
 
@@ -226,6 +227,7 @@ Every module, with its numbered functional requirements, is defined in the [Soft
 | --- | --- |
 | Orchestration | n8n (self-hosted, queue mode) as scheduler; agent service in TypeScript on Node 22 with a Postgres job queue |
 | Web app | Next.js 16 (App Router, Server Actions), React 19, TypeScript, Zod, Supabase Auth |
+| Interface | Midnight & Brass design system in plain CSS tokens (dark and light), Fraunces and Plus Jakarta Sans bundled locally |
 | Database and knowledge base | Supabase (PostgreSQL, row-level security, pgvector) |
 | LLMs | OpenAI, Anthropic, Gemini |
 | Lead data and scraping | Apollo, Clay, Apify (Google Maps and social media actors) |
@@ -410,6 +412,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F28](reports/F28-salesforce-pipedrive/feature-report.md) | Salesforce and Pipedrive: choose HubSpot, Pipedrive or Salesforce for CRM sync; contacts, deals, activity and won or lost read back, each CRM's API verified first | 29 passed |
 | [F29](reports/F29-public-api-webhooks/feature-report.md) | Public API and outbound webhooks: scoped, hashed API keys with rate limits; read and add leads; signed webhook events with retries ([API guide](docs/API.md)) | 31 passed |
 | [F30](reports/F30-visitor-identification/feature-report.md) | Website visitor identification, company level: a cookie-free script, reverse-IP lookup that keeps only company networks, visits from pipeline companies raised as signals; IPs erased after lookup | 25 passed |
+| [F32](reports/F32-luxury-ui/feature-report.md) | Midnight & Brass interface: dark and light themes with a remembered switch, grouped sidebar with all 20 workspace pages, a home screen led by what needs attention, bundled fonts and contrast-safe agency colours | 9 passed |
 
 ---
 

@@ -14,7 +14,8 @@ describe('white-label brand', () => {
       .toEqual({ app_name: 'Northwind Sales Cloud', logo_url: 'https://cdn.northwind.test/l.png', primary_color: '#0e7c66', support_email: 'help@northwind.test' });
     expect(readBrand({ app_name: 'X', logo_url: 'javascript:alert(1)' })).toEqual(DEFAULT_BRAND);
     expect(readBrand(null)).toEqual(DEFAULT_BRAND);
-    expect(brandStyle(readBrand({ app_name: 'X', primary_color: '#0e7c66' }))).toEqual({ '--accent': '#0e7c66' });
+    expect(brandStyle(readBrand({ app_name: 'X', primary_color: '#0e7c66' }))).toEqual({ '--accent': '#0e7c66', '--accent-text': '#ffffff' });
+    expect(brandStyle(readBrand({ app_name: 'X', primary_color: '#f5d77a' }))).toEqual({ '--accent': '#f5d77a', '--accent-text': '#1a1408' });
     expect(brandStyle(DEFAULT_BRAND)).toBeUndefined();
   });
 

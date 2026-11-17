@@ -2,7 +2,7 @@
 
 Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE ENGINEER | FULL STACK DEVELOPER
 
-Features F01 to F23 and F25 to F30 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
+Features F01 to F23, F25 to F30 and F32 (the Midnight & Brass interface) are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
 
 Every feature here carries the same deliverables as the first twenty: a live migration, agent and web code, database, agent and web tests, a feature report, use cases and test cases, pushed to GitHub.
 

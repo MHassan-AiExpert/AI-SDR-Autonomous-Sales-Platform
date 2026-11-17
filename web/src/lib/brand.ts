@@ -5,6 +5,7 @@ import { cache } from 'react';
 import { headers } from 'next/headers';
 import { z } from 'zod';
 import { createClient } from './supabase/server';
+import { accentText } from './theme';
 
 export type Brand = { app_name: string; logo_url: string | null; primary_color: string | null; support_email: string | null };
 
@@ -55,7 +56,7 @@ export const workspaceBrand = cache(async (workspaceId: string): Promise<Brand> 
   return hostBrand();
 });
 
-/** Inline style that applies the brand colour to buttons and links. */
+/** Inline style that applies the brand colour to buttons and links, with readable text on it. */
 export function brandStyle(b: Brand): Record<string, string> | undefined {
-  return b.primary_color ? { ['--accent' as string]: b.primary_color } : undefined;
+  return b.primary_color ? { ['--accent' as string]: b.primary_color, ['--accent-text' as string]: accentText(b.primary_color) } : undefined;
 }

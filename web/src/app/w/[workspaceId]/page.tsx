@@ -6,20 +6,35 @@ import { CHANNELS, CHANNEL_LABELS } from '@/lib/validation';
 import { buildOnboardingPlan, type IntegrationStatus } from '@/lib/integrations';
 import Link from 'next/link';
 import { setOutreachPaused } from './actions';
+import { agentStatus, attentionItems, greeting, hourIn, safeTimeZone } from '@/lib/overview';
 
 export const metadata: Metadata = { title: 'Overview' };
 
 export default async function OverviewPage({ params }: { params: Promise<{ workspaceId: string }> }) {
   const { workspaceId } = await params;
-  const { supabase, workspace } = await requireWorkspace(workspaceId);
+  const { supabase, workspace, user } = await requireWorkspace(workspaceId);
+  const base = `/w/${workspace.id}`;
   const manage = canManageSettings(workspace.role);
 
-  const [{ count: leads }, { count: openDeals }, { data: members }, { data: integrations }] = await Promise.all([
+  const { data: seen } = await supabase.from('notification_seen').select('seen_at').eq('workspace_id', workspace.id).eq('user_id', user.id).maybeSingle();
+  let warningsQ = supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).in('severity', ['warning', 'critical']);
+  if (seen?.seen_at) warningsQ = warningsQ.gt('created_at', seen.seen_at);
+  const [{ count: leads }, { count: openDeals }, { data: members }, { data: integrations }, { count: handoffs }, { count: drafts }, { count: warnings }, { data: tz }] = await Promise.all([
     supabase.from('leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id),
     supabase.from('deals').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).not('stage', 'in', '(won,lost)'),
     supabase.rpc('workspace_members_list', { ws: workspace.id }),
     supabase.from('integrations').select('tool, status').eq('workspace_id', workspace.id),
+    supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('event', 'handoff').is('accepted_at', null),
+    supabase.from('emails').select('id', { count: 'exact', head: true }).eq('workspace_id', workspace.id).eq('status', 'draft'),
+    warningsQ,
+    supabase.from('workspaces').select('notify_timezone').eq('id', workspace.id).maybeSingle(),
   ]);
+  const attention = attentionItems({ handoffs: handoffs ?? 0, drafts: drafts ?? 0, warnings: warnings ?? 0 }, base);
+  const meta = (user.user_metadata ?? {}) as { full_name?: unknown; name?: unknown };
+  const rawName = typeof meta.full_name === 'string' ? meta.full_name : typeof meta.name === 'string' ? meta.name : '';
+  const firstName = rawName.trim().split(/\s+/)[0]?.slice(0, 40) ?? '';
+  const timeZone = (tz as { notify_timezone?: string | null } | null)?.notify_timezone ?? null;
+  const today = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: safeTimeZone(timeZone) }).format(new Date());
   const plan = buildOnboardingPlan({
     enabledChannels: workspace.enabled_channels,
     aiCloserEnabled: workspace.ai_closer_enabled,
@@ -29,7 +44,34 @@ export default async function OverviewPage({ params }: { params: Promise<{ works
 
   return (
     <>
-      <h1>Overview</h1>
+      <header className="greeting">
+        <div className="greeting-text">
+          <span className={workspace.outreach_paused ? 'status status-paused' : 'status'}>{agentStatus(workspace.outreach_paused)} · {today}</span>
+          <h1>{greeting(hourIn(timeZone))}{firstName ? <>, <em>{firstName}</em></> : null}</h1>
+          <p className="muted">Here is what is happening in {workspace.name}, and what needs you.</p>
+        </div>
+        <div className="row">
+          <Link className="btn btn-secondary" href={`${base}/leads`}>View leads</Link>
+          <Link className="btn btn-primary" href={`${base}/campaigns/new`}>Start a campaign</Link>
+        </div>
+      </header>
+
+      <section className="stack" aria-labelledby="attention">
+        <h2 id="attention" className="section-title">Needs your attention</h2>
+        {attention.length ? (
+          <ul className="attention">
+            {attention.map((a) => (
+              <li key={a.key}>
+                <span className="num">{a.count > 999 ? '999+' : a.count}</span>
+                <span className="attention-text"><strong>{a.title}</strong><span>{a.hint}</span></span>
+                <Link className={a.key === 'handoffs' ? 'btn btn-primary' : 'btn btn-secondary'} href={a.href}>{a.action}</Link>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="all-clear">You are all caught up. Nothing is waiting for you right now.</p>
+        )}
+      </section>
       {!plan.ready ? (
         <section className="card stack" aria-labelledby="setup-prompt">
           <h2 id="setup-prompt">Finish setup: {plan.progress}% complete</h2>
@@ -38,8 +80,8 @@ export default async function OverviewPage({ params }: { params: Promise<{ works
         </section>
       ) : null}
       <dl className="stats">
-        <div><dt>Leads</dt><dd>{leads ?? 0}</dd></div>
-        <div><dt>Open deals</dt><dd>{openDeals ?? 0}</dd></div>
+        <div><dt>Leads found</dt><dd>{(leads ?? 0).toLocaleString('en-US')}</dd></div>
+        <div><dt>Open deals</dt><dd>{(openDeals ?? 0).toLocaleString('en-US')}</dd></div>
         <div><dt>Team members</dt><dd>{members?.length ?? 0}</dd></div>
         <div><dt>Automation</dt><dd>{workspace.automation_mode === 'autopilot' ? 'Full autopilot' : 'Approval mode'}</dd></div>
       </dl>

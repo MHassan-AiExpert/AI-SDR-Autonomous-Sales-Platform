@@ -200,6 +200,30 @@ if (process.env.SCREENSHOT_DIR) {
   await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/signup.png` });
 }
 
+await check('E2E-21', 'The Dark / Light switch is remembered, applied before the page draws, and never leaves the site', async () => {
+  const ctx = await browser.newContext({ colorScheme: 'light' });
+  const p = await ctx.newPage();
+  await p.goto(`${BASE}/login`);
+  assert.equal(await p.evaluate(() => document.documentElement.dataset.theme ?? null), null);
+  const res = await p.request.post(`${BASE}/theme`, { form: { theme: 'dark', back: '/login' }, maxRedirects: 0 });
+  assert.equal(res.status(), 303);
+  assert.equal(new URL(res.headers().location, BASE).pathname, '/login');
+  await p.goto(`${BASE}/login`);
+  assert.equal(await p.evaluate(() => document.documentElement.dataset.theme), 'dark');
+  assert.equal(await p.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(10, 18, 34)');
+  for (const back of ['//evil.test/x', 'https://evil.test', '/\\evil.test']) {
+    const r = await p.request.post(`${BASE}/theme`, { form: { theme: 'light', back }, maxRedirects: 0 });
+    const to = new URL(r.headers().location, BASE);
+    assert.equal(to.host, new URL(BASE).host);
+    assert.equal(to.pathname, '/workspaces');
+  }
+  const bad = await p.request.post(`${BASE}/theme`, { form: { theme: '<script>', back: '/login' }, maxRedirects: 0 });
+  assert.equal(bad.status(), 303);
+  await p.goto(`${BASE}/login`);
+  assert.equal(await p.evaluate(() => document.documentElement.dataset.theme ?? null), null);
+  await ctx.close();
+});
+
 await browser.close();
 for (const r of results) console.log(r.join(' | '));
 const failed = results.filter((r) => r[2] !== 'Pass').length;
