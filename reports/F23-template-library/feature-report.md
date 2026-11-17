@@ -8,7 +8,7 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 | SRS reference | M4 (copy reuse), M6 (outreach cadence), M26 (agency defaults) |
 | Location | `supabase/migrations/20261114030000_template_library.sql`, `agents/src/store.ts`, `agents/src/copywriting.ts`, `agents/src/replies.ts`, `web/src/lib/templates.ts`, `web/src/app/w/[workspaceId]/templates/`, `web/src/app/agency/` |
 | Automated tests | 15 database, 8 agent, 14 web unit: **37 passed, 0 failed** |
-| Live checks | Pending: the database connector's confirmation went unanswered. The migration passes against a local Postgres on every test run and applies on the next connected session |
+| Live checks | Passed: the migration is applied to the hosted database, with row security, both functions and the agency trigger verified in place (LIVE-48, LIVE-50) |
 
 ## 1. Summary
 

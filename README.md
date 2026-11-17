@@ -397,6 +397,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F21](reports/F21-csv-import-bulk-actions/feature-report.md) | CSV lead import with hygiene and undo, plus bulk actions on the lead list | 34 passed |
 | [F22](reports/F22-conditional-branching-ab-testing/feature-report.md) | Conditional branching across email, calls and texts, with A/B messages scored for significance | 48 passed |
 | [F23](reports/F23-template-library/feature-report.md) | Shared template library for sequences and snippets, with agency defaults for new client workspaces | 37 passed |
+| [F25](reports/F25-waterfall-enrichment/feature-report.md) | Waterfall enrichment: Apollo, Hunter and People Data Labs in a chosen order, stopping at the first hit, with match rates per provider | 29 passed |
 
 ---
 

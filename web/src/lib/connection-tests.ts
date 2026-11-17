@@ -18,6 +18,8 @@ type Probe = {
   init: (c: Record<string, string>) => RequestInit;
   /** Optional extra check of the response body. */
   read?: (body: unknown) => TestResult;
+  /** Statuses that prove the credentials work, for probes built to find nothing. */
+  okStatuses?: number[];
 };
 
 const bearer = (token: string): RequestInit => ({ headers: { Authorization: `Bearer ${token}` } });
@@ -85,6 +87,30 @@ export const PROBES: Record<ToolId, Probe> = {
     url: () => 'https://api.stripe.com/v1/balance',
     init: (c) => bearer(c.secret_key),
   },
+  hunter: {
+    // Account information is free and does not use a search
+    url: () => 'https://api.hunter.io/v2/account',
+    init: (c) => ({ headers: { 'X-API-KEY': c.api_key } }),
+    read: (b) => {
+      const data = isObj(b) && isObj(b.data) ? b.data : null;
+      if (!data) return { ok: false, error: 'Hunter did not accept this API key.' };
+      const req = isObj(data.requests) ? data.requests : {};
+      const pool = isObj(req.credits) ? req.credits : isObj(req.searches) ? req.searches : null;
+      const left = pool && Number.isFinite(Number(pool.available)) && Number.isFinite(Number(pool.used))
+        ? Number(pool.available) - Number(pool.used) : undefined;
+      return { ok: true, credits: left !== undefined && left >= 0 ? left : undefined };
+    },
+  },
+  pdl: {
+    // A search that matches no one: proves the key without spending a credit (billing is per record returned)
+    url: () => 'https://api.peopledatalabs.com/v5/person/search',
+    init: (c) => ({
+      method: 'POST',
+      headers: { 'X-Api-Key': c.api_key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: { term: { full_name: 'connection test no such person zq' } }, size: 1 }),
+    }),
+    okStatuses: [404],
+  },
 };
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -109,6 +135,10 @@ export async function testConnection(tool: ToolId, credentials: Record<string, s
     return { ok: false, error: `Could not reach ${name}. Check your connection and try again.` };
   }
 
+  if (probe.okStatuses?.includes(response.status)) return { ok: true };
+  if (response.status === 402) {
+    return { ok: false, error: `${name} accepted these credentials but the account has no credits left.` };
+  }
   if (response.status === 401 || response.status === 403) {
     return { ok: false, error: `${name} rejected these credentials.` };
   }

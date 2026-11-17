@@ -6,6 +6,7 @@ import type { Channel } from './validation';
 export const TOOL_IDS = [
   'openai', 'anthropic', 'gemini', 'apollo', 'apify', 'zerobounce', 'instantly', 'twilio',
   'vapi', 'whatsapp', 'zoom', 'calendly', 'hubspot', 'slack', 'pandadoc', 'stripe',
+  'hunter', 'pdl',
 ] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
@@ -120,6 +121,16 @@ export const TOOLS: Record<ToolId, Tool> = {
     fields: [{ name: 'secret_key', label: 'Restricted or secret key', secret: true, pattern: /^(sk|rk)_(live|test)_[A-Za-z0-9]{10,250}$/, help: 'Starts with sk_ or rk_' }],
     docsUrl: 'https://dashboard.stripe.com/apikeys',
   },
+  hunter: {
+    id: 'hunter', name: 'Hunter', purpose: 'Finds decision makers and work emails at a company domain',
+    fields: [{ name: 'api_key', label: 'API key', secret: true, pattern: KEY }],
+    docsUrl: 'https://hunter.io/api-keys',
+  },
+  pdl: {
+    id: 'pdl', name: 'People Data Labs', purpose: 'Finds decision makers, work emails and mobile numbers by company',
+    fields: [{ name: 'api_key', label: 'API key', secret: true, pattern: KEY, help: 'A Pro plan is needed to receive emails and phones' }],
+    docsUrl: 'https://dashboard.peopledatalabs.com/',
+  },
 };
 
 export function isToolId(value: unknown): value is ToolId {
@@ -193,6 +204,7 @@ type PlanInput = {
 const STEP_DEFS: { id: string; title: string; description: string; tools: ToolId[]; needs: (i: PlanInput) => boolean }[] = [
   { id: 'llm', title: 'Language model', description: 'Powers research, writing, reply handling and the voice agents. Connect at least one.', tools: ['openai', 'anthropic', 'gemini'], needs: () => true },
   { id: 'lead_data', title: 'Lead sources', description: 'Where agents find leads. Apollo for B2B data, Apify for Google Maps and social media.', tools: ['apollo', 'apify'], needs: () => true },
+  { id: 'contact_data', title: 'More contact finders', description: 'Optional. Tried after Apollo for companies it has no one at, in the order you set in Settings. Each one raises how many companies get a named contact.', tools: ['hunter', 'pdl'], needs: () => false },
   { id: 'verification', title: 'Email verification', description: 'Checks every address before it is emailed, to protect your domains.', tools: ['zerobounce'], needs: (i) => Boolean(i.enabledChannels.email) },
   { id: 'email', title: 'Email sending', description: 'Sends your sequences from warmed-up mailboxes.', tools: ['instantly'], needs: (i) => Boolean(i.enabledChannels.email) },
   { id: 'voice_agent', title: 'AI voice agents', description: 'Runs the cold caller, the closer and the receptionist.', tools: ['vapi'], needs: (i) => Boolean(i.enabledChannels.voice) || i.aiCloserEnabled },

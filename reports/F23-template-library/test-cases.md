@@ -74,7 +74,8 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 
 | ID | Check | Result |
 | --- | --- | --- |
-| LIVE-48 | `templates` with row security, both scope constraints, both functions `security invoker`, the workspace-creation trigger, visitors refused | **Pending** — the database connector's confirmation went unanswered when the feature was finished |
+| LIVE-48 | `templates` with row security, both scope constraints, both functions `security invoker`, the workspace-creation trigger, visitors refused | **Pass** — row security on with 2 policies, the trigger in place, both functions `security invoker`, `anon` refused |
+| LIVE-50 | Security advisor after the migration | **Pass** — no new warnings |
 
 The migration applies cleanly to a local Postgres on every test run, which is how all 15 database tests above execute.
 

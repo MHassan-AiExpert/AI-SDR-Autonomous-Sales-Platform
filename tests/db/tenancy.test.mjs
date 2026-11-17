@@ -8,6 +8,7 @@ const TENANT_TABLES = [
   'workspace_members', 'audit_log', 'agent_jobs', 'inbound_events', 'campaigns', 'companies', 'leads', 'assets', 'activities',
   'follow_ups', 'emails', 'calls', 'messages', 'replies', 'meetings', 'deals', 'suppressions',
   'integrations', 'playbooks', 'run_logs', 'calendly_subscriptions', 'stripe_endpoints', 'learning_reports', 'learning_suggestions', 'crm_links', 'notifications', 'notification_seen', 'lead_imports', 'sequence_steps', 'sequence_variants', 'lead_step_runs',
+  'enrichment_attempts',
 ];
 
 before(async () => {
@@ -19,7 +20,7 @@ before(async () => {
 
 // ---------------------------------------------------------------- structure
 test('DB-01 migrations apply cleanly in order', () => {
-  assert.equal(migrationFiles().length, 26);
+  assert.equal(migrationFiles().length, 27);
 });
 
 test('DB-02 every public table has row-level security enabled', async () => {

@@ -3,7 +3,8 @@ import { ActionForm, SubmitButton } from '@/components/action-form';
 import { canManageSettings } from '@/lib/roles';
 import { requireWorkspace } from '@/lib/session';
 import { CHANNELS, CHANNEL_LABELS } from '@/lib/validation';
-import { rotateWebhookToken, saveCrmSettings, saveNotifySettings, syncCrmNow, updateSettings } from '../actions';
+import { rotateWebhookToken, saveCrmSettings, saveEnrichmentOrder, saveNotifySettings, syncCrmNow, updateSettings } from '../actions';
+import { ENRICHMENT_PROVIDERS, PROVIDER_LABELS, describeOrder, matchRateLabel, savedOrder, toStats } from '@/lib/enrichment';
 import { EVENTS, EVENT_LABELS, hourLabel } from '@/lib/notifications';
 import { CRM_SCOPES, CRM_SCOPE_LABELS, DEAL_STAGES, DEAL_STAGE_LABELS, savedStage } from '@/lib/crm';
 import { inboundWebhookUrl } from '@/lib/texting';
@@ -21,6 +22,14 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
     supabase.from('integrations').select('status').eq('workspace_id', workspace.id).eq('tool', 'hubspot').maybeSingle(),
     supabase.from('crm_links').select('record_type').eq('workspace_id', workspace.id).limit(10000),
   ]);
+  const [{ data: orderRow }, { data: finders }, { data: statRows }] = await Promise.all([
+    supabase.from('workspaces').select('enrichment_order').eq('id', workspace.id).maybeSingle(),
+    supabase.from('integrations').select('tool, status').eq('workspace_id', workspace.id).in('tool', [...ENRICHMENT_PROVIDERS]),
+    supabase.rpc('enrichment_provider_stats', { ws: workspace.id, p_days: 30 }),
+  ]);
+  const order = savedOrder(orderRow?.enrichment_order);
+  const connectedFinders = new Set((finders ?? []).filter((f) => f.status === 'connected').map((f) => f.tool as string));
+  const stats = toStats(statRows);
   const linked = (t: string) => (links ?? []).filter((l) => l.record_type === t).length;
   const hubConnected = hub?.status === 'connected';
   // The webhook address is a secret; only owners and admins see it
@@ -144,6 +153,47 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
           </fieldset>
           {manage ? <SubmitButton>Save notifications</SubmitButton> : null}
         </ActionForm>
+      </section>
+
+      <section className="card stack" aria-labelledby="finders">
+        <h2 id="finders">Contact finders</h2>
+        <p className="muted">For companies found without a contact, the enrichment agent asks these providers in this order and stops at the first that finds a decision maker with an email or phone. Leave a position empty to stop using a provider. Every email is still verified before it is sent.</p>
+        <p>{describeOrder(order, connectedFinders)}</p>
+        <ActionForm action={saveEnrichmentOrder} className="stack">
+          <input type="hidden" name="workspace_id" value={workspace.id} />
+          <fieldset className="stack" disabled={!manage}>
+            <legend className="sr-only">Provider order</legend>
+            <div className="grid-2">
+              {ENRICHMENT_PROVIDERS.map((_, i) => (
+                <label key={i} className="field">
+                  <span>{i === 0 ? 'Ask first' : `Then (${i + 1})`}</span>
+                  <select name={`order_${i + 1}`} defaultValue={order[i] ?? ''}>
+                    <option value="">Nobody</option>
+                    {ENRICHMENT_PROVIDERS.map((p) => (
+                      <option key={p} value={p}>{PROVIDER_LABELS[p]}{connectedFinders.has(p) ? '' : ' (not connected)'}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          {manage ? <SubmitButton>Save order</SubmitButton> : null}
+        </ActionForm>
+        <h3>Match rate, last 30 days</h3>
+        {stats.length ? (
+          <div className="table-wrap"><table className="table">
+            <thead><tr><th scope="col">Provider</th><th scope="col">Companies asked</th><th scope="col">Found someone</th><th scope="col">Match rate</th><th scope="col">Leads added</th><th scope="col">Failed lookups</th></tr></thead>
+            <tbody>
+              {stats.map((s) => (
+                <tr key={s.provider}>
+                  <th scope="row">{PROVIDER_LABELS[s.provider as keyof typeof PROVIDER_LABELS] ?? s.provider}</th>
+                  <td>{s.attempts}</td><td>{s.found}</td><td>{matchRateLabel(s.match_rate)}</td><td>{s.leads}</td><td>{s.errors}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        ) : <p className="muted">No enrichment runs yet. Match rates appear after the first run.</p>}
+        <p className="muted">Each provider is only asked about the companies the ones before it missed, so a lower rate further down the order is expected: those are the harder companies.</p>
       </section>
 
       <section className="card stack" aria-labelledby="crm">

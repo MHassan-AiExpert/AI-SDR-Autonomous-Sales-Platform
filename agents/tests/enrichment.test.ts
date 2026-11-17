@@ -162,7 +162,7 @@ describe('enrichment edge cases', () => {
     const j = await lastJob(c);
     expect(j.status).toBe('succeeded');
     expect(j.result.notes).toEqual([
-      'Connect Apollo to find named decision makers; the agent used company websites only.',
+      'Connect Apollo, Hunter or People Data Labs to find named decision makers; the agent used company websites only.',
       'Connect ZeroBounce to verify emails before any email is sent.',
       'Connect Twilio to check phone line types before calls and SMS.',
     ]);

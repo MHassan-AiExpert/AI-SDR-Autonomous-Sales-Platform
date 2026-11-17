@@ -12,6 +12,7 @@ import { parseCrmForm } from '@/lib/crm';
 import { parseNotifyForm } from '@/lib/notifications';
 import { MAX_ROWS, describeImport } from '@/lib/csv';
 import { LEAD_STAGES, STAGE_LABELS } from '@/lib/campaigns';
+import { parseOrderForm } from '@/lib/enrichment';
 
 const NO_PERMISSION = 'You do not have permission to do that.';
 
@@ -306,6 +307,19 @@ export async function syncCrmNow(_prev: FormState, form: FormData): Promise<Form
   }
   revalidatePath(`/w/${workspaceId}/settings`);
   return { notice: queued ? 'HubSpot will be brought up to date within a minute.' : 'A sync is already waiting to run.' };
+}
+
+export async function saveEnrichmentOrder(_prev: FormState, form: FormData): Promise<FormState> {
+  const workspaceId = workspaceIdFrom(form);
+  if (!workspaceId) return { error: 'Workspace not found.' };
+  const parsed = parseOrderForm(form);
+  if (!parsed.ok) return { error: parsed.error };
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from('workspaces').update({ enrichment_order: parsed.order }).eq('id', workspaceId).select('id');
+  if (error) return { error: friendlyDbError(error) };
+  if (!data?.length) return { error: NO_PERMISSION };
+  revalidatePath(`/w/${workspaceId}/settings`);
+  return { notice: parsed.order.length ? 'Contact finder order saved. The next enrichment run uses it.' : 'Saved. The agent will read company websites only.' };
 }
 
 export async function saveNotifySettings(_prev: FormState, form: FormData): Promise<FormState> {

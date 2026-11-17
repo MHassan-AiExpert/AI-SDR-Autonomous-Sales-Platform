@@ -15,7 +15,8 @@ describe('tool catalog', () => {
   it('ONB-01 the catalog matches the tools the database accepts', () => {
     const dir = new URL('../../supabase/migrations/', import.meta.url);
     const sql = readdirSync(dir).map((f) => readFileSync(new URL(f, dir), 'utf8')).join('\n');
-    const match = sql.match(/integrations_tool_check check \(tool in \(([\s\S]*?)\)\)/);
+    // The latest migration that redefines the constraint is the one in force
+    const match = [...sql.matchAll(/integrations_tool_check check \(tool in \(([\s\S]*?)\)\)/g)].at(-1) ?? null;
     expect(match).not.toBeNull();
     const dbTools = [...match![1].matchAll(/'([a-z]+)'/g)].map((m) => m[1]).sort();
     expect([...TOOL_IDS].sort()).toEqual(dbTools);

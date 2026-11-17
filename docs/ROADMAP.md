@@ -79,7 +79,9 @@ In the SRS as FR-6.3 (profile view, connection request, message). The UI toggle 
 
 Whatever approach is chosen, the design is fixed: each customer connects their own LinkedIn account, caps are enforced per account, intervals are randomized, failures back off exponentially, new accounts ramp gradually, and the restriction risk is stated in the interface.
 
-### F25. Waterfall enrichment
+### F25. Waterfall enrichment — **DONE**
+See the [feature report](../reports/F25-waterfall-enrichment/feature-report.md). Providers: Apollo, Hunter, People Data Labs, then the company website.
+
 Replace the single Apollo lookup with a provider chain that stops at the first hit and records which provider found the contact, so match rates per provider can be compared. Falls back to the existing website scrape.
 
 ### F26. Signals agent (agent #17)

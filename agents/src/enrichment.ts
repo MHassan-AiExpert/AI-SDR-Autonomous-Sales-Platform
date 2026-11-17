@@ -1,12 +1,14 @@
 // Enrichment agent (SRS M3): turns companies found without a contact into
 // leads, fills in company details, verifies every email and checks every
 // phone's line type, using the company's own connected tools.
+// Contacts come from a provider waterfall (F25, see waterfall.ts).
 
 import { ProviderError } from './http.ts';
 import { IcpSchema, SourcePlanSchema } from './plan.ts';
 import { dedupe, hasContact, isSuppressed, normalizeCandidate, type LeadCandidate } from './leads.ts';
-import { enrichOrganization, findDecisionMakers } from './sources/apollo.ts';
-import { findSiteContacts, defaultResolver, type Resolver } from './sources/website.ts';
+import { enrichOrganization } from './sources/apollo.ts';
+import type { Resolver } from './sources/website.ts';
+import { runWaterfall, PROVIDER_LABELS, type ProviderId, type WaterfallResult } from './waterfall.ts';
 import { lookupPhone, verifyEmail, type EmailVerdict, type LineType } from './sources/verify.ts';
 import type { Deps } from './jobs.ts';
 import type { Campaign, Job, PendingCompany } from './store.ts';
@@ -50,6 +52,7 @@ export async function runEnrichment(deps: EnrichmentDeps, job: Job, campaign: Ca
     companies: { checked: 0, leads_added: 0, no_contact: 0, error: undefined as string | undefined },
     details_updated: 0,
     apollo_credits_used: 0,
+    providers: {} as WaterfallResult['providers'],
     emails: { checked: 0, valid: 0, invalid: 0, catch_all: 0, risky: 0, error: undefined as string | undefined },
     phones: { checked: 0, mobile: 0, landline: 0, voip: 0, unknown: 0, invalid: 0, error: undefined as string | undefined },
     notes,
@@ -76,49 +79,48 @@ export async function runEnrichment(deps: EnrichmentDeps, job: Job, campaign: Ca
   const pending = await store.companiesWithoutLeads(ws, campaign.id, LIMITS.companies);
   if (pending.length) {
     result.companies.checked = pending.length;
-    const found = new Map<string, LeadCandidate[]>();
-    let methodFailed = false;
 
-    const apolloKey = connected.has('apollo') ? (await store.secret(ws, 'apollo'))?.api_key : undefined;
+    // The provider chain, in the workspace's order, using only connected providers
+    const order = await store.enrichmentOrder(ws);
+    const keys: Partial<Record<ProviderId, string>> = {};
+    for (const p of order) {
+      if (!connected.has(p)) continue;
+      const key = (await store.secret(ws, p))?.api_key;
+      if (key) keys[p] = key;
+    }
     const titles = titlesFor(campaign);
-    const withDomain = pending.filter((c): c is PendingCompany & { domain: string } => Boolean(c.domain));
-    if (apolloKey && titles.length && withDomain.length && remaining > 0) {
-      try {
-        const { byDomain, creditsUsed } = await findDecisionMakers(withDomain.map((c) => c.domain), titles, apolloKey, {
-          perCompany: LIMITS.decisionMakersPerCompany, limit: Math.min(remaining, LIMITS.companies), fetchImpl: deps.fetchImpl,
-        });
-        result.apollo_credits_used += creditsUsed;
-        for (const c of withDomain) {
-          const people = byDomain.get(c.domain) ?? [];
-          if (people.length) found.set(c.id, people.map((p) => ({ ...p, source: c.source_channel ?? 'apollo', companyId: c.id })));
-        }
-      } catch (err) {
-        methodFailed = true;
-        result.companies.error = message(err);
-        if (isAuthError(err)) await store.markToolError(ws, 'apollo', 'error', message(err));
-      }
-    } else if (!apolloKey) {
-      notes.push('Connect Apollo to find named decision makers; the agent used company websites only.');
+    // Apollo searches by title, so without titles it has nothing to search for
+    if (!titles.length) delete keys.apollo;
+    if (!Object.keys(keys).length) {
+      notes.push('Connect Apollo, Hunter or People Data Labs to find named decision makers; the agent used company websites only.');
     }
 
-    // Companies still without anyone: read their own website
-    const rest = withDomain.filter((c) => !found.has(c.id));
-    await mapLimit(rest, LIMITS.concurrency, async (c) => {
-      try {
-        const site = await findSiteContacts(c.domain, deps.fetchImpl, deps.resolve ?? defaultResolver);
-        if (site.email || site.phone) {
-          found.set(c.id, [{
-            source: c.source_channel ?? 'manual', sourceQuery: `Company website ${c.domain}`, companyId: c.id,
-            email: site.email, phone: site.phone, company: { name: c.name, domain: c.domain },
-          }]);
-        }
-      } catch (err) {
-        log('warn', 'website contact lookup failed', { job: job.id, domain: c.domain, error: message(err) });
-      }
-    });
+    const withDomain = pending.filter((c): c is PendingCompany & { domain: string } => Boolean(c.domain));
+    const fall = remaining > 0 && withDomain.length
+      ? await runWaterfall({
+        companies: withDomain, order, keys, titles, perCompany: LIMITS.decisionMakersPerCompany,
+        budget: Math.min(remaining, LIMITS.companies), wanted: remaining, concurrency: LIMITS.concurrency,
+        fetchImpl: deps.fetchImpl, resolve: deps.resolve, mapLimit,
+      })
+      : null;
+    const found = fall?.found ?? new Map<string, LeadCandidate[]>();
+    if (fall) {
+      result.providers = fall.providers;
+      result.apollo_credits_used = fall.providers.apollo?.credits_used ?? 0;
+      notes.push(...fall.notes);
+      const errors = Object.entries(fall.providers).filter(([, s]) => s?.error).map(([p, s]) => `${PROVIDER_LABELS[p as ProviderId]}: ${s!.error}`);
+      if (errors.length) result.companies.error = errors.join('; ');
+      for (const [p, msg] of fall.authFailed) await store.markToolError(ws, p, 'error', msg);
+      await store.recordEnrichmentAttempts(ws, campaign.id, fall.attempts);
+      log('info', 'waterfall enrichment', { job: job.id, providers: Object.keys(fall.providers), found: found.size, failed: fall.failed.size });
+    }
+    const failed = fall?.failed ?? new Set<string>();
+    const sourceOf = new Map(pending.map((c) => [c.id, c.source_channel]));
 
     // In the order the companies were found, so the daily limit is applied fairly and predictably
-    const candidates = pending.flatMap((c) => found.get(c.id) ?? []).map(normalizeCandidate).filter(hasContact);
+    const candidates = pending
+      .flatMap((c) => (found.get(c.id) ?? []).map((p) => ({ ...p, companyId: c.id, source: sourceOf.get(c.id) ?? (p.enrichmentProvider === 'apollo' ? 'apollo' as const : 'manual' as const) })))
+      .map(normalizeCandidate).filter(hasContact);
     const suppressions = await store.suppressions(ws, candidates);
     const allowed = candidates.filter((c) => !isSuppressed(c, suppressions));
     const { fresh } = dedupe(allowed, await store.existingKeys(ws, allowed));
@@ -135,7 +137,7 @@ export async function runEnrichment(deps: EnrichmentDeps, job: Job, campaign: Ca
       else if (heldBack.has(c.id)) continue;
       else if (blocked.has(c.id)) await store.updateCompany(ws, c.id, 'skipped');
       else if (!c.domain) await store.updateCompany(ws, c.id, 'skipped');
-      else if (!methodFailed && remaining > 0) {
+      else if (!failed.has(c.id) && remaining > 0) {
         await store.updateCompany(ws, c.id, 'no_contact_found');
         result.companies.no_contact++;
       }

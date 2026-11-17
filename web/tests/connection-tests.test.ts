@@ -19,9 +19,12 @@ const CREDS: Record<ToolId, Record<string, string>> = {
   slack: { bot_token: 'xoxb-SECRET-12345' },
   pandadoc: { api_key: 'pd-SECRET' },
   stripe: { secret_key: 'sk_test_SECRETstripe' },
+  hunter: { api_key: 'hunter-SECRET' },
+  pdl: { api_key: 'pdl-SECRET' },
 };
 
 const GOOD_BODY: Partial<Record<ToolId, unknown>> = {
+  hunter: { data: { requests: { searches: { used: 1, available: 25 } } } },
   apollo: { is_logged_in: true },
   zerobounce: { Credits: '2500' },
   twilio: { status: 'active' },
@@ -48,6 +51,7 @@ describe('connection tests', () => {
       apollo: 'api.apollo.io', apify: 'api.apify.com', zerobounce: 'api.zerobounce.net', instantly: 'api.instantly.ai',
       twilio: 'api.twilio.com', vapi: 'api.vapi.ai', whatsapp: 'graph.facebook.com', zoom: 'zoom.us',
       calendly: 'api.calendly.com', hubspot: 'api.hubapi.com', slack: 'slack.com', pandadoc: 'api.pandadoc.com', stripe: 'api.stripe.com',
+      hunter: 'api.hunter.io', pdl: 'api.peopledatalabs.com',
     };
     for (const tool of TOOL_IDS) {
       const f = mockFetch(200, GOOD_BODY[tool] ?? {});

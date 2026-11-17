@@ -29,6 +29,8 @@ export type LeadCandidate = {
   company: CompanyCandidate;
   /** Set when the lead belongs to a company that is already stored. */
   companyId?: string;
+  /** Which enrichment provider found this contact (F25). */
+  enrichmentProvider?: 'apollo' | 'hunter' | 'pdl' | 'website';
 };
 
 export type SourceResult = { leads: LeadCandidate[]; found: number; creditsUsed?: number; notes?: string[] };
@@ -47,6 +49,7 @@ export function normalizeCandidate(c: LeadCandidate): LeadCandidate {
   }
   return {
     companyId: c.companyId,
+    ...(c.enrichmentProvider ? { enrichmentProvider: c.enrichmentProvider } : {}),
     source: c.source,
     sourceQuery: cleanText(c.sourceQuery, 300) ?? '',
     fullName: normalizePersonName(c.fullName),

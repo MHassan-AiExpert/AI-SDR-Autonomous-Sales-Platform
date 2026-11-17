@@ -252,10 +252,11 @@ export class Store {
         const cid = await companyId(c);
         const rows = await tx`
           insert into leads (workspace_id, campaign_id, company_id, full_name, email, phone, title, linkedin_url,
-                             social_handles, source_channel, source_query, niche)
+                             social_handles, source_channel, source_query, niche, enrichment_provider)
           values (${workspaceId}::uuid, ${campaign.id}::uuid, ${cid}::uuid, ${c.fullName ?? null}, ${c.email ?? null},
                   ${c.phone ?? null}, ${c.title ?? null}, ${c.linkedinUrl ?? null},
-                  ${tx.json((c.socialHandles ?? {}) as postgres.JSONValue)}, ${c.source}, ${c.sourceQuery || null}, ${campaign.niche})
+                  ${tx.json((c.socialHandles ?? {}) as postgres.JSONValue)}, ${c.source}, ${c.sourceQuery || null}, ${campaign.niche},
+                  ${c.enrichmentProvider ?? null})
           on conflict do nothing
           returning id`;
         if (!rows.length) continue;
@@ -287,6 +288,24 @@ export class Store {
   }
 
   // ---------------------------------------------------------------- enrichment
+
+  /** The workspace's contact provider order (F25); unknown values are dropped. */
+  async enrichmentOrder(workspaceId: string): Promise<Array<'apollo' | 'hunter' | 'pdl'>> {
+    const rows = await this.sql`select enrichment_order from workspaces where id = ${workspaceId}::uuid`;
+    const order = Array.isArray(rows[0]?.enrichment_order) ? (rows[0].enrichment_order as string[]) : ['apollo', 'hunter', 'pdl'];
+    return order.filter((p): p is 'apollo' | 'hunter' | 'pdl' => p === 'apollo' || p === 'hunter' || p === 'pdl');
+  }
+
+  async recordEnrichmentAttempts(workspaceId: string, campaignId: string,
+    attempts: { companyId: string; provider: string; outcome: string; contacts: number }[]) {
+    if (!attempts.length) return;
+    await this.sql`
+      insert into enrichment_attempts (workspace_id, campaign_id, company_id, provider, outcome, contacts)
+      select ${workspaceId}::uuid, ${campaignId}::uuid, a.company_id, a.provider, a.outcome, a.contacts
+      from unnest(${attempts.map((a) => a.companyId)}::uuid[], ${attempts.map((a) => a.provider)}::text[],
+                  ${attempts.map((a) => a.outcome)}::text[], ${attempts.map((a) => Math.min(20, a.contacts))}::int[])
+        as a(company_id, provider, outcome, contacts)`;
+  }
 
   /** Companies this campaign found that still have no lead. */
   async companiesWithoutLeads(workspaceId: string, campaignId: string, limit: number): Promise<PendingCompany[]> {
