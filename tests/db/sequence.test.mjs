@@ -175,3 +175,41 @@ test('SEQB-13 a visitor cannot read the sequence or record a step', async () => 
   await assert.rejects(asAnon(db, (tx) => tx.query(`select lead_step_record($1, $1, $1, 'a', 'sent', null)`, [wsA])), /permission denied/);
   await assert.rejects(asAnon(db, (tx) => tx.query(`select * from sequence_candidates($1, $1, 10)`, [wsA])), /permission denied/);
 });
+
+test('SEQB-14 the sequence agent runs hourly where branching is on, and the fixed call and text jobs stand down there', async () => {
+  const count = async (type) => (await db.query(
+    `select count(*)::int n from agent_jobs where campaign_id = $1 and type = $2`, [camp, type])).rows[0].n;
+  const enqueue = () => asService(db, (tx) => tx.query('select agent_jobs_enqueue_due(24)'));
+  await db.query(`update campaigns set status = 'active', voice_status = 'live', sms_status = 'live', branching_enabled = false where id = $1`, [camp]);
+  await db.query(`delete from agent_jobs where campaign_id = $1`, [camp]);
+
+  // Branching off: the fixed cadence is scheduled and the sequence is not
+  await enqueue();
+  assert.equal(await count('sequence'), 0);
+  assert.equal(await count('voice_outreach'), 1);
+  assert.equal(await count('sms_outreach'), 1);
+
+  // Branching on: the sequence is scheduled; the fixed call and text jobs are not
+  await db.query(`delete from agent_jobs where campaign_id = $1`, [camp]);
+  await db.query(`update campaigns set branching_enabled = true where id = $1`, [camp]);
+  await enqueue();
+  assert.equal(await count('sequence'), 1);
+  assert.equal(await count('voice_outreach'), 0);
+  assert.equal(await count('sms_outreach'), 0);
+
+  // Not again within the hour, and again after it
+  await db.query(`update agent_jobs set status = 'succeeded', finished_at = now() where campaign_id = $1`, [camp]);
+  await enqueue();
+  assert.equal(await count('sequence'), 1);
+  await db.query(`update agent_jobs set created_at = now() - interval '61 minutes' where campaign_id = $1 and type = 'sequence'`, [camp]);
+  await enqueue();
+  assert.equal(await count('sequence'), 2);
+
+  // The kill switch stops it like everything else
+  await db.query(`delete from agent_jobs where campaign_id = $1`, [camp]);
+  await db.query(`update workspaces set outreach_paused = true where id = $1`, [wsA]);
+  await enqueue();
+  assert.equal(await count('sequence'), 0);
+  await db.query(`update workspaces set outreach_paused = false where id = $1`, [wsA]);
+  await db.query(`update campaigns set branching_enabled = false, voice_status = 'not_started', sms_status = 'not_started' where id = $1`, [camp]);
+});

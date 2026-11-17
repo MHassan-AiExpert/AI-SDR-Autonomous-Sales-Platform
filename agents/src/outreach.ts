@@ -15,7 +15,12 @@ export async function runEmailOutreach(deps: Deps, job: Job, campaign: Campaign)
   const ws = job.workspace_id;
   const { store } = deps;
   const workspace = await store.workspaceState(ws);
-  const wantLive = campaign.status === 'active' && campaign.outreach_status === 'live' && !workspace.outreach_paused && workspace.enabled_channels.email !== false;
+  // With branching on, the sequence agent sends every step, so the fixed
+  // cadence must stand down. Treating it as "not live" pauses the multi-step
+  // Instantly campaign, which also stops follow-ups for leads already in it;
+  // otherwise a lead would get both the old cadence and the new sequence.
+  const wantLive = campaign.status === 'active' && campaign.outreach_status === 'live' && !workspace.outreach_paused
+    && workspace.enabled_channels.email !== false && !campaign.branching_enabled;
   const connected = await store.connectedTools(ws);
   const key = connected.has('instantly') ? (await store.secret(ws, 'instantly'))?.api_key : undefined;
 

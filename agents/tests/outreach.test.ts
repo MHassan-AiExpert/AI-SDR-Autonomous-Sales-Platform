@@ -197,6 +197,19 @@ describe('copywriting and outreach jobs', () => {
     await t.db.query(`delete from suppressions where workspace_id = $1`, [t.wsA]);
   });
 
+  test('OJ-13 turning branching on pauses the fixed cadence in Instantly, so nobody is emailed twice', async () => {
+    await t.db.query(`update campaigns set branching_enabled = true where id = $1`, [c]);
+    const f = apis();
+    const j = await run(f, 'email_outreach');
+    // The multi-step campaign is paused, and no lead is added to it
+    expect(f.sent.map((s) => s.url.split('/v2')[1])).toEqual(['/campaigns/inst-camp-1/pause']);
+    expect(f.sent.filter((s) => /\/leads$/.test(s.url))).toEqual([]);
+    expect((await t.db.query(`select instantly_state from campaigns where id = $1`, [c])).rows[0].instantly_state).toBe('paused');
+    expect(j.status).toBe('succeeded');
+    // Put the campaign back as the later tests expect it
+    await t.db.query(`update campaigns set branching_enabled = false, instantly_state = 'active' where id = $1`, [c]);
+  });
+
   test('OJ-09 in approval mode drafts wait; a rejected step holds the whole sequence back', async () => {
     await t.db.query(`update workspaces set automation_mode = 'approval' where id = $1`, [t.wsA]);
     const co = (await t.db.query(`select company_id from leads where id = $1`, [leads.kim])).rows[0].company_id;

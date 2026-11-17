@@ -20,7 +20,7 @@ before(async () => {
 
 // ---------------------------------------------------------------- structure
 test('DB-01 migrations apply cleanly in order', () => {
-  assert.equal(migrationFiles().length, 27);
+  assert.equal(migrationFiles().length, 28);
 });
 
 test('DB-02 every public table has row-level security enabled', async () => {

@@ -97,6 +97,11 @@ export async function runVoiceOutreach(deps: Deps, job: Job, campaign: Campaign)
   if (campaign.status !== 'active' || campaign.voice_status !== 'live' || state.outreach_paused || state.enabled_channels.voice === false) {
     return { calls_started: 0, note: 'Calling is not live for this campaign.' };
   }
+  // With branching on, calls are steps in the sequence; calling here as well
+  // would ring the same lead twice
+  if (campaign.branching_enabled) {
+    return { calls_started: 0, note: 'Branching is on for this campaign, so calls are made as sequence steps instead.' };
+  }
   if (!callWindowOpen(new Date(), campaign.call_timezone, campaign.call_window_start, campaign.call_window_end, campaign.call_days)) {
     return { calls_started: 0, note: 'Outside calling hours; calls continue in the next calling window.' };
   }

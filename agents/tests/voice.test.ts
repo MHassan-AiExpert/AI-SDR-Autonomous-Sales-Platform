@@ -224,6 +224,14 @@ describe('voice outreach', () => {
     void id;
   });
 
+  test('VJ-08b with branching on, calls are left to the sequence, so nobody is rung twice', async () => {
+    await t.db.query(`update campaigns set branching_enabled = true where id = $1`, [c]);
+    const g = apis();
+    expect((await run(g)).result).toEqual({ calls_started: 0, note: 'Branching is on for this campaign, so calls are made as sequence steps instead.' });
+    expect(g.calls).toHaveLength(0);
+    await t.db.query(`update campaigns set branching_enabled = false where id = $1`, [c]);
+  });
+
   test('VJ-09 a rejected Vapi key fails the run, marks the call failed and flags Vapi in Setup', async () => {
     const j = await run(apis({ vapi: () => new Response('{}', { status: 401 }) }));
     expect(j).toMatchObject({ status: 'failed', error: 'Vapi rejected the stored credentials' });

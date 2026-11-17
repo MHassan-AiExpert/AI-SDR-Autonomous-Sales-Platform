@@ -110,6 +110,11 @@ export async function runTextOutreach(deps: Deps, job: Job, campaign: Campaign) 
   if (campaign.status !== 'active' || campaign.sms_status !== 'live' || state.outreach_paused || state.enabled_channels[channel] === false) {
     return { sent: 0, note: `${name} follow-ups are not live for this campaign.` };
   }
+  // With branching on, texts are steps in the sequence; sending here as well
+  // would text the same lead twice
+  if (campaign.branching_enabled) {
+    return { sent: 0, note: 'Branching is on for this campaign, so texts are sent as sequence steps instead.' };
+  }
   if (!callWindowOpen(new Date(), campaign.call_timezone, campaign.call_window_start, campaign.call_window_end, campaign.call_days)) {
     return { sent: 0, note: 'Outside contact hours; texts continue in the next window.' };
   }

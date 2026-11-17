@@ -236,6 +236,13 @@ describe('text follow-ups', () => {
     expect(await stage(id)).toBe('do_not_contact');
   });
 
+  test('TJ-08b with branching on, texts are left to the sequence, so nobody is texted twice', async () => {
+    await t.db.query(`update campaigns set branching_enabled = true where id = $1`, [c]);
+    const g = apis();
+    expect((await runJob(g)).result).toEqual({ sent: 0, note: 'Branching is on for this campaign, so texts are sent as sequence steps instead.' });
+    await t.db.query(`update campaigns set branching_enabled = false where id = $1`, [c]);
+  });
+
   test('TJ-08 texts stop when the channel is off, the campaign is paused or it is outside contact hours', async () => {
     const g = apis();
     await t.db.query(`update workspaces set enabled_channels = enabled_channels || '{"sms": false}' where id = $1`, [t.wsA]);

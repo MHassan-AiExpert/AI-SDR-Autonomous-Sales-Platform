@@ -154,7 +154,18 @@ A **failed** step is recorded too, so it is not retried for ever — but it does
 | `lead_step_runs` was left with update and delete rights for signed-in users, because new tables in this schema arrive with full rights and the grant alone does not remove them | Checking the live privileges against `audit_log` and `run_logs`, the project's other record-only tables | An explicit `revoke all ... from authenticated` before the `select` grant, matching those two tables |
 | A condition that failed to parse would have been treated as no condition at all, so a broken sequence would have contacted everyone | Reviewing the decision function before trusting it | An unparseable condition counts as unmet. Test SEQ-17 |
 
-## 12. Limits of this feature
+## 12. Correction made after release
+
+Two defects were found on 17 November, while building F26, and fixed in `supabase/migrations/20261117010000_sequence_scheduling.sql` and the three single-channel agents:
+
+| Defect | Effect | Fix |
+| --- | --- | --- |
+| The sequence agent was never added to the scheduler (`agent_jobs_enqueue_due`) | Branching ran only when someone pressed "Run sequence steps", although the sequence screen said it ran on its own schedule | It is now queued hourly for every active campaign with branching on, and the kill switch stops it like everything else. Test SEQB-14 |
+| With branching on, the fixed email, call and text agents kept running and none of them checked for branching | A lead would have been contacted by both the old cadence and the new sequence, on every channel | Under branching the email agent pauses the multi-step Instantly campaign, which also stops follow-ups for leads already in it; the call and text agents return without contacting anyone, and the scheduler stops queuing them. Tests OJ-13, VJ-08b, TJ-08b |
+
+**No one was contacted twice.** Branching is off by default and no campaign had turned it on before the fix went live.
+
+## 13. Limits of this feature
 
 - A sequence cannot yet fork into two parallel branches that both continue; it chooses one step at a time. In practice conditions express the same shapes, but the model is a decision, not a tree.
 - The `any` combinator is supported by the engine but not offered in the interface; a condition using it is shown as custom.

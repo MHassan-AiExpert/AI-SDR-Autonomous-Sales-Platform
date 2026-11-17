@@ -83,6 +83,16 @@ Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE E
 | An unparseable condition would have been treated as no condition, so a broken sequence would have contacted everyone | Reviewing the decision function | Unparseable counts as unmet. SEQ-17 |
 | The first draft of SEQB-01 asserted that an **owner** would be refused, after a bulk edit to the test file | The database suite failed with "missing expected rejection" | Restored to assert the rep is the one refused |
 
+## Added with the correction of 17 November
+
+| ID | Test case | Expected result | Actual |
+| --- | --- | --- | --- |
+| SEQB-14 | The scheduler with branching off, then on; again within the hour and after it; with the kill switch on | Off: calls and texts queued, no sequence job. On: the sequence job queued and the call and text jobs not. Hourly, and nothing under the kill switch | Pass |
+| OJ-13 | The email agent runs on a campaign with branching on | The multi-step Instantly campaign is paused and no lead is added to it | Pass |
+| VJ-08b | The call agent runs on a campaign with branching on | Nobody is called; the run says calls are made as sequence steps | Pass |
+| TJ-08b | The text agent runs on a campaign with branching on | Nobody is texted; the run says texts are sent as sequence steps | Pass |
+| LIVE-51 | The corrected scheduler on the hosted database | **Pass** — queues the sequence agent, applies the branching rule, still callable only by the backend | Pass |
+
 ## Live checks on the hosted database
 
 | ID | Check | Result |
