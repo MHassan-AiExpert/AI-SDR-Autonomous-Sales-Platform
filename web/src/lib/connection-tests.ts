@@ -73,6 +73,12 @@ export const PROBES: Record<ToolId, Probe> = {
   },
   calendly: { url: () => 'https://api.calendly.com/users/me', init: (c) => bearer(c.access_token) },
   hubspot: { url: () => 'https://api.hubapi.com/crm/v3/objects/contacts?limit=1', init: (c) => bearer(c.access_token) },
+  ipapi: {
+    // The documented POST form, so the key travels in the body, not the address
+    url: () => 'https://api.ipapi.is',
+    init: (c) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ q: '8.8.8.8', key: c.api_key }) }),
+    read: (b) => (isObj(b) && typeof b.ip === 'string' ? { ok: true } : { ok: false, error: 'ipapi.is did not return a lookup.' }),
+  },
   pipedrive: {
     // The token in a header, never in the URL
     url: () => 'https://api.pipedrive.com/v1/users/me',

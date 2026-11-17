@@ -47,5 +47,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)'],
+  // The visitor script and its page views need no session, and run on every page of a customer's site
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|v\\.js$|api/visit/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)'],
 };

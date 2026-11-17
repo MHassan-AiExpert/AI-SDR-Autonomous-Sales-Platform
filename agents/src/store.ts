@@ -1928,6 +1928,73 @@ export class Store {
     return rows[0]?.off === true;
   }
 
+  // ---------------------------------------------------------------- website visitors
+
+  async claimSiteVisits(limit: number) {
+    return (await this.sql`select * from site_visits_claim(${limit}::int)`) as unknown as
+      { id: string; workspace_id: string; ip: string; ip_hash: string; path: string; created_at: Date }[];
+  }
+
+  async visitorHosts(workspaceId: string): Promise<string[]> {
+    const rows = await this.sql`select visitor_allowed_hosts as h from workspaces where id = ${workspaceId}::uuid`;
+    return (rows[0]?.h as string[] | undefined) ?? [];
+  }
+
+  /** A cached lookup younger than `days`, or null. */
+  async ipLookup(ipHash: string, days: number): Promise<import('./sources/ipapi.ts').Identified | null> {
+    const rows = await this.sql`
+      select company_domain, company_name, country_code, skip_reason from ip_lookups
+      where ip_hash = ${ipHash} and looked_up_at > now() - make_interval(days => ${days}::int)`;
+    const r = rows[0];
+    if (!r) return null;
+    return r.company_domain ? { company: { domain: r.company_domain, name: r.company_name, country: r.country_code } } : { skip: r.skip_reason ?? 'not a company network' };
+  }
+
+  async saveIpLookup(ipHash: string, r: import('./sources/ipapi.ts').Identified) {
+    const c = 'company' in r ? r.company : null;
+    await this.sql`
+      insert into ip_lookups (ip_hash, company_domain, company_name, country_code, skip_reason, looked_up_at)
+      values (${ipHash}, ${c?.domain ?? null}, ${c?.name ?? null}, ${c?.country ?? null}, ${'skip' in r ? r.skip : null}, now())
+      on conflict (ip_hash) do update set company_domain = excluded.company_domain, company_name = excluded.company_name,
+        country_code = excluded.country_code, skip_reason = excluded.skip_reason, looked_up_at = excluded.looked_up_at`;
+  }
+
+  /** Resolves a view; the database erases its IP on the next claim, and this erases it now. */
+  async markVisit(id: string, status: 'identified' | 'skipped', reason: string | null, domain: string | null) {
+    await this.sql`
+      update site_visits set status = ${status}, skip_reason = ${reason}, company_domain = ${domain}, ip = null, resolved_at = now()
+      where id = ${id}::uuid`;
+  }
+
+  /** Counts a visit for the company, matching it to the workspace's own company by domain. */
+  async recordSiteVisitor(workspaceId: string, c: { domain: string; name: string | null; country: string | null }, path: string, at: Date) {
+    const rows = await this.sql`
+      with co as (
+        select id, name from companies where workspace_id = ${workspaceId}::uuid and lower(domain) = ${c.domain}
+        order by created_at limit 1
+      )
+      insert into site_visitors as v (workspace_id, company_domain, company_name, country_code, company_id, visits, first_seen_at, last_seen_at, top_paths)
+      values (${workspaceId}::uuid, ${c.domain}, coalesce((select name from co), ${c.name}), ${c.country}, (select id from co), 1, ${at}, ${at},
+              jsonb_build_object(${path}::text, 1))
+      on conflict (workspace_id, company_domain) do update set
+        visits = v.visits + 1,
+        last_seen_at = greatest(v.last_seen_at, excluded.last_seen_at),
+        company_id = coalesce(excluded.company_id, v.company_id),
+        company_name = coalesce(excluded.company_name, v.company_name),
+        country_code = coalesce(excluded.country_code, v.country_code),
+        -- At most 20 paths are kept: a path already counted, or a new one while there is room
+        top_paths = case
+          when v.top_paths ? ${path}::text or (select count(*) from jsonb_object_keys(v.top_paths)) < 20
+            then v.top_paths || jsonb_build_object(${path}::text, coalesce((v.top_paths ->> ${path}::text)::int, 0) + 1)
+          else v.top_paths end
+      returning company_id, company_name, last_signal_at, top_paths`;
+    return rows[0] as { company_id: string | null; company_name: string | null; last_signal_at: Date | null; top_paths: Record<string, number> };
+  }
+
+  async setVisitorSignaled(workspaceId: string, domain: string) {
+    await this.sql`update site_visitors set last_signal_at = now() where workspace_id = ${workspaceId}::uuid and company_domain = ${domain}`;
+  }
+
   // ---------------------------------------------------------------- templates
 
   /** The workspace's reusable copy blocks, for the writer to draw on. */

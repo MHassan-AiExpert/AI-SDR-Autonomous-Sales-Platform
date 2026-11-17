@@ -6,7 +6,7 @@ import type { Channel } from './validation';
 export const TOOL_IDS = [
   'openai', 'anthropic', 'gemini', 'apollo', 'apify', 'zerobounce', 'instantly', 'twilio',
   'vapi', 'whatsapp', 'zoom', 'calendly', 'hubspot', 'slack', 'pandadoc', 'stripe',
-  'hunter', 'pdl', 'pipedrive', 'salesforce',
+  'hunter', 'pdl', 'pipedrive', 'salesforce', 'ipapi',
 ] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
@@ -112,6 +112,11 @@ export const TOOLS: Record<ToolId, Tool> = {
     id: 'hubspot', name: 'HubSpot', purpose: 'Optional sync to your existing CRM',
     fields: [{ name: 'access_token', label: 'Private app access token', secret: true, pattern: KEY }],
     docsUrl: 'https://developers.hubspot.com/docs/api/private-apps',
+  },
+  ipapi: {
+    id: 'ipapi', name: 'ipapi.is', purpose: 'Identifies which companies visit your website',
+    fields: [{ name: 'api_key', label: 'API key', secret: true, pattern: KEY, help: 'Free for 1,000 lookups a day; each network is looked up once a month' }],
+    docsUrl: 'https://ipapi.is/developers.html',
   },
   pipedrive: {
     id: 'pipedrive', name: 'Pipedrive', purpose: 'Optional sync to your existing CRM',
@@ -239,6 +244,7 @@ const STEP_DEFS: { id: string; title: string; description: string; tools: ToolId
   { id: 'alerts', title: 'Team alerts', description: 'Hot leads, handoffs and won deals in Slack.', tools: ['slack'], needs: () => true },
   { id: 'agreements', title: 'Agreements', description: 'Sends the agreement for e-signature when a deal is won.', tools: ['pandadoc'], needs: (i) => i.aiCloserEnabled },
   { id: 'payments', title: 'Payments', description: 'Sends payment links and invoices for won deals.', tools: ['stripe'], needs: (i) => i.aiCloserEnabled },
+  { id: 'visitors', title: 'Website visitors', description: 'Optional. Names the companies that visit your website, so a visit can trigger a sequence step.', tools: ['ipapi'], needs: () => false },
   { id: 'crm', title: 'External CRM', description: 'Optional. The built-in sales workspace already keeps every lead and deal.', tools: ['hubspot', 'pipedrive', 'salesforce'], needs: () => false },
 ];
 

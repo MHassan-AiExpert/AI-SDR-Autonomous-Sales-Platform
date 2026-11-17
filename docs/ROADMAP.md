@@ -2,7 +2,7 @@
 
 Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE ENGINEER | FULL STACK DEVELOPER
 
-Features F01 to F23 and F25 to F29 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
+Features F01 to F23 and F25 to F30 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
 
 Every feature here carries the same deliverables as the first twenty: a live migration, agent and web code, database, agent and web tests, a feature report, use cases and test cases, pushed to GitHub.
 
@@ -26,7 +26,7 @@ flowchart LR
     F27[F27 Deliverability<br/>DONE]
     F28[F28 Salesforce<br/>and Pipedrive<br/>DONE]
     F29[F29 Public API<br/>DONE]
-    F30[F30 Visitor identification]
+    F30[F30 Visitor identification<br/>DONE]
   end
   P1 --> P2 --> P3
   F22 -.->|LinkedIn steps belong<br/>inside the sequence| F24
@@ -99,7 +99,7 @@ Watches leads already in the workspace and re-triggers outreach when something c
 
 Only the built-in tier is required. The paid and social tiers connect like any other integration and the agent skips them cleanly when they are absent.
 
-## Phase 3 — Platform
+## Phase 3 — Platform — **COMPLETE**
 
 ### F27. Deliverability dashboard — **DONE**
 See the [feature report](../reports/F27-deliverability-dashboard/feature-report.md).
@@ -116,7 +116,9 @@ See the [feature report](../reports/F29-public-api-webhooks/feature-report.md) a
 
 A REST API with scoped keys, and events sent out when a lead changes stage, a meeting is booked or a deal is won. Unlocks Zapier and Make without building either.
 
-### F30. Website visitor identification — company level
+### F30. Website visitor identification — company level — **DONE**
+See the [feature report](../reports/F30-visitor-identification/feature-report.md).
+
 A tracking script identifies the visiting **company** by reverse IP lookup, matches it to leads and campaigns, and raises a signal. Person-level identification is deliberately out of scope: company-level works in the EU and carries far lower privacy risk.
 
 ## Not scheduled

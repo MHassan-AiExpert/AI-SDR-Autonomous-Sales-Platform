@@ -49,7 +49,7 @@ await check('E2E-02', 'Workspace list redirects signed-out visitors to sign-in',
 });
 
 await check('E2E-03', 'Workspace pages redirect signed-out visitors and remember the destination', async () => {
-  for (const path of [`/w/${WS}`, `/w/${WS}/setup`, `/w/${WS}/members`, `/w/${WS}/settings`, `/w/${WS}/campaigns`, `/w/${WS}/campaigns/new`, `/w/${WS}/campaigns/${WS}`, `/w/${WS}/leads?source=apollo`, `/w/${WS}/leads/${WS}`, `/w/${WS}/campaigns/${WS}/emails`, `/w/${WS}/inbox`, `/w/${WS}/meetings`, `/w/${WS}/calls`, `/w/${WS}/texts`, `/w/${WS}/deals`, `/w/${WS}/playbook`, `/w/${WS}/learning`, `/w/${WS}/analytics`, `/w/${WS}/analytics/export`, `/w/${WS}/notifications`, `/w/${WS}/notifications?view=handoffs`, `/agency`, `/agency/${WS}`, `/agency/${WS}/usage`, `/w/${WS}/leads/import`, `/w/${WS}/templates`, `/w/${WS}/signals`, `/w/${WS}/deliverability`, `/w/${WS}/developers`, `/w/${WS}/campaigns/${WS}/sequence`]) {
+  for (const path of [`/w/${WS}`, `/w/${WS}/setup`, `/w/${WS}/members`, `/w/${WS}/settings`, `/w/${WS}/campaigns`, `/w/${WS}/campaigns/new`, `/w/${WS}/campaigns/${WS}`, `/w/${WS}/leads?source=apollo`, `/w/${WS}/leads/${WS}`, `/w/${WS}/campaigns/${WS}/emails`, `/w/${WS}/inbox`, `/w/${WS}/meetings`, `/w/${WS}/calls`, `/w/${WS}/texts`, `/w/${WS}/deals`, `/w/${WS}/playbook`, `/w/${WS}/learning`, `/w/${WS}/analytics`, `/w/${WS}/analytics/export`, `/w/${WS}/notifications`, `/w/${WS}/notifications?view=handoffs`, `/agency`, `/agency/${WS}`, `/agency/${WS}/usage`, `/w/${WS}/leads/import`, `/w/${WS}/templates`, `/w/${WS}/signals`, `/w/${WS}/deliverability`, `/w/${WS}/developers`, `/w/${WS}/visitors`, `/w/${WS}/campaigns/${WS}/sequence`]) {
     await page.goto(`${BASE}${path}`);
     assert.equal(new URL(page.url()).pathname, '/login');
     assert.equal(await page.locator('input[name=next]').inputValue(), path);
@@ -166,6 +166,21 @@ await check('E2E-19', 'The public API refuses a request without a valid key, and
   assert.equal(bad.status, 401);
   const del = await fetch(`${BASE}/api/v1/leads`, { method: 'DELETE' });
   assert.equal(del.status, 405);
+});
+
+await check('E2E-20', 'The visitor script is served without a session, and page views answer 204 whatever is sent', async () => {
+  const js = await fetch(`${BASE}/v.js`);
+  assert.equal(js.status, 200);
+  assert.match(js.headers.get('content-type') ?? '', /javascript/);
+  assert.match(await js.text(), /globalPrivacyControl/);
+  assert.equal(js.headers.get('set-cookie'), null);
+  for (const key of ['site_' + '0'.repeat(32), 'nonsense']) {
+    const r = await fetch(`${BASE}/api/visit/${key}`, { method: 'POST', body: '{"p":"/"}', headers: { Origin: 'https://acme.com', 'Content-Type': 'text/plain' } });
+    assert.equal(r.status, 204);
+    assert.equal(await r.text(), '');
+    assert.equal(r.headers.get('set-cookie'), null);
+  }
+  assert.equal((await fetch(`${BASE}/api/visit/nonsense`)).status, 405);
 });
 
 await check('E2E-18', 'The signal address refuses a malformed token, a wrong method and a broken body without signing in', async () => {

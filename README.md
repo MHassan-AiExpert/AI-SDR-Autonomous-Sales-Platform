@@ -158,6 +158,8 @@ sequenceDiagram
 - **Multi-channel sourcing:** Apollo and Clay, Google Maps, Instagram, Facebook, LinkedIn, TikTok, X, CSV import
 - **LLM discovery:** OpenAI, Anthropic and Gemini each return their top 10 matching companies, merged and deduplicated
 - **Lead hygiene:** enrichment, email verification, phone line-type checks, DNC screening, global suppression list
+- **Waterfall enrichment:** Apollo first, then Hunter and People Data Labs, in the order a team sets
+- **Buying signals:** funding, news, hiring, technology and job changes, intent data from any tool, and company-level website visits, each able to trigger a sequence step
 
 ### AI research and assets
 - Research brief and 0–100 fit score per lead
@@ -169,7 +171,8 @@ sequenceDiagram
 - Designed, branded HTML emails with deliverability-safe first touches
 - **AI cold-call agent:** intro, playbook pitch, audit reminder, live Zoom booking, voicemail detection, call forwarding to humans
 - Two-way **SMS** and **WhatsApp** conversations that answer questions and book meetings
-- Optional LinkedIn touches, mailbox and number rotation, time-zone-aware sending
+- **Conditional sequences:** every step chooses its channel and timing from what the lead did, with A/B/C variants and a shared template library
+- Mailbox and number rotation, time-zone-aware sending
 
 ### Conversations, meetings and closing
 - Reply classification across every channel, AI auto-responses and instant human escalation
@@ -187,7 +190,10 @@ sequenceDiagram
 - **Automation controls:** full autopilot by default, any channel or stage can be switched off or put into approval mode, plus a global kill switch
 - **Lead management:** source categorization, full lead and business profiles, activity timeline and follow-up tracking per lead
 - Recordings, transcripts and summaries for every caller, closer and receptionist session
-- Slack notifications, CRM sync, dashboards and usage tracking
+- Slack notifications, dashboards and usage tracking
+- **CRM sync** with HubSpot, Pipedrive or Salesforce, including won and lost deals read back
+- **Deliverability dashboard:** SPF, DKIM, DMARC, MX and blocklist checks per sending domain, with mailbox and warm-up health
+- **Public API and signed webhooks** for Zapier, Make, n8n or a team's own systems
 - **White-label mode** with custom domain, branding, agency console and per-client billing
 
 ---
@@ -403,6 +409,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F27](reports/F27-deliverability-dashboard/feature-report.md) | Deliverability dashboard: SPF, DKIM, DMARC, MX and domain blocklist checks per sending domain with fixes, Instantly mailbox and warm-up health, per-mailbox sends, bounces and replies, and alerts on new problems | 37 passed |
 | [F28](reports/F28-salesforce-pipedrive/feature-report.md) | Salesforce and Pipedrive: choose HubSpot, Pipedrive or Salesforce for CRM sync; contacts, deals, activity and won or lost read back, each CRM's API verified first | 29 passed |
 | [F29](reports/F29-public-api-webhooks/feature-report.md) | Public API and outbound webhooks: scoped, hashed API keys with rate limits; read and add leads; signed webhook events with retries ([API guide](docs/API.md)) | 31 passed |
+| [F30](reports/F30-visitor-identification/feature-report.md) | Website visitor identification, company level: a cookie-free script, reverse-IP lookup that keeps only company networks, visits from pipeline companies raised as signals; IPs erased after lookup | 25 passed |
 
 ---
 
