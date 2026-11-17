@@ -402,6 +402,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F26](reports/F26-signals-agent/feature-report.md) | Signals agent (agent #17): funding, news, hiring, technology and job changes, plus a signal address for intent and social tools; a sequence step can re-open a finished conversation with the signal as its opening line | 43 passed |
 | [F27](reports/F27-deliverability-dashboard/feature-report.md) | Deliverability dashboard: SPF, DKIM, DMARC, MX and domain blocklist checks per sending domain with fixes, Instantly mailbox and warm-up health, per-mailbox sends, bounces and replies, and alerts on new problems | 37 passed |
 | [F28](reports/F28-salesforce-pipedrive/feature-report.md) | Salesforce and Pipedrive: choose HubSpot, Pipedrive or Salesforce for CRM sync; contacts, deals, activity and won or lost read back, each CRM's API verified first | 29 passed |
+| [F29](reports/F29-public-api-webhooks/feature-report.md) | Public API and outbound webhooks: scoped, hashed API keys with rate limits; read and add leads; signed webhook events with retries ([API guide](docs/API.md)) | 31 passed |
 
 ---
 
@@ -409,6 +410,8 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 
 - **[Feature reports](reports/README.md):** design, use cases and test cases for every feature
 - **[Software Requirements Specification](docs/SRS.md):** scope, users and roles, architecture, end-to-end flow, all functional requirements (M1–M26), data model, integrations, non-functional requirements, production infrastructure and operations, compliance, build phases and acceptance criteria
+- **[API and webhooks guide](docs/API.md):** authentication, endpoints, errors, rate limits, webhook events, signature verification and retries
+- **[Roadmap](docs/ROADMAP.md):** the next phase of features and their status
 
 ---
 

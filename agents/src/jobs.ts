@@ -25,6 +25,7 @@ import { runAudits as audit } from './audit.ts';
 import { runLearning as learn } from './learning.ts';
 import { runCrmSync as syncCrm, CrmError } from './crm.ts';
 import { runMonitoring } from './monitoring.ts';
+import { deliverWebhooks } from './webhooksOut.ts';
 import type { Dns } from './deliverability.ts';
 import { notify } from './notify.ts';
 import type { Resolver } from './sources/website.ts';
@@ -290,6 +291,8 @@ export async function runQueuedJobs(deps: Deps, limit: number) {
     // Workspace health checks; a monitoring problem never stops the agents
     await runMonitoring(deps).catch((err) => log('error', 'monitoring sweep failed', { error: err instanceof Error ? err.message : 'unknown' }));
   }
+  // Outbound webhooks every cycle, so events reach other systems within a minute
+  await deliverWebhooks(deps).catch((err) => log('error', 'webhook delivery failed', { error: err instanceof Error ? err.message : 'unknown' }));
   const jobs = await deps.store.claimJobs(limit);
   const outcomes: { id: string; type: string; status: 'succeeded' | 'failed' | 'retrying' }[] = [];
   for (const job of jobs) {

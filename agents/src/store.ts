@@ -1915,6 +1915,19 @@ export class Store {
     });
   }
 
+  // ---------------------------------------------------------------- outbound webhooks
+
+  async claimWebhookDeliveries(limit: number) {
+    return (await this.sql`select * from webhook_deliveries_claim(${limit}::int)`).map((r) => ({ ...r, attempts: Number(r.attempts) })) as unknown as
+      import('./webhooksOut.ts').Delivery[];
+  }
+
+  /** Records an attempt; true when it switched the endpoint off. */
+  async webhookDeliveryResult(id: string, ok: boolean, status: number | null, error: string | null): Promise<boolean> {
+    const rows = await this.sql`select webhook_delivery_result(${id}::uuid, ${ok}, ${status}::int, ${error}) as off`;
+    return rows[0]?.off === true;
+  }
+
   // ---------------------------------------------------------------- templates
 
   /** The workspace's reusable copy blocks, for the writer to draw on. */

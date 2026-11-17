@@ -49,7 +49,7 @@ await check('E2E-02', 'Workspace list redirects signed-out visitors to sign-in',
 });
 
 await check('E2E-03', 'Workspace pages redirect signed-out visitors and remember the destination', async () => {
-  for (const path of [`/w/${WS}`, `/w/${WS}/setup`, `/w/${WS}/members`, `/w/${WS}/settings`, `/w/${WS}/campaigns`, `/w/${WS}/campaigns/new`, `/w/${WS}/campaigns/${WS}`, `/w/${WS}/leads?source=apollo`, `/w/${WS}/leads/${WS}`, `/w/${WS}/campaigns/${WS}/emails`, `/w/${WS}/inbox`, `/w/${WS}/meetings`, `/w/${WS}/calls`, `/w/${WS}/texts`, `/w/${WS}/deals`, `/w/${WS}/playbook`, `/w/${WS}/learning`, `/w/${WS}/analytics`, `/w/${WS}/analytics/export`, `/w/${WS}/notifications`, `/w/${WS}/notifications?view=handoffs`, `/agency`, `/agency/${WS}`, `/agency/${WS}/usage`, `/w/${WS}/leads/import`, `/w/${WS}/templates`, `/w/${WS}/signals`, `/w/${WS}/deliverability`, `/w/${WS}/campaigns/${WS}/sequence`]) {
+  for (const path of [`/w/${WS}`, `/w/${WS}/setup`, `/w/${WS}/members`, `/w/${WS}/settings`, `/w/${WS}/campaigns`, `/w/${WS}/campaigns/new`, `/w/${WS}/campaigns/${WS}`, `/w/${WS}/leads?source=apollo`, `/w/${WS}/leads/${WS}`, `/w/${WS}/campaigns/${WS}/emails`, `/w/${WS}/inbox`, `/w/${WS}/meetings`, `/w/${WS}/calls`, `/w/${WS}/texts`, `/w/${WS}/deals`, `/w/${WS}/playbook`, `/w/${WS}/learning`, `/w/${WS}/analytics`, `/w/${WS}/analytics/export`, `/w/${WS}/notifications`, `/w/${WS}/notifications?view=handoffs`, `/agency`, `/agency/${WS}`, `/agency/${WS}/usage`, `/w/${WS}/leads/import`, `/w/${WS}/templates`, `/w/${WS}/signals`, `/w/${WS}/deliverability`, `/w/${WS}/developers`, `/w/${WS}/campaigns/${WS}/sequence`]) {
     await page.goto(`${BASE}${path}`);
     assert.equal(new URL(page.url()).pathname, '/login');
     assert.equal(await page.locator('input[name=next]').inputValue(), path);
@@ -154,6 +154,18 @@ await check('E2E-15', 'Pages fit a phone screen without sideways scrolling', asy
     assert.ok(overflow <= 0, `${path} overflows by ${overflow}px`);
   }
   await phone.close();
+});
+
+await check('E2E-19', 'The public API refuses a request without a valid key, and unknown methods, without signing in', async () => {
+  const none = await fetch(`${BASE}/api/v1/leads`);
+  assert.equal(none.status, 401);
+  assert.match((await none.json()).error, /Authorization: Bearer/);
+  assert.equal(none.headers.get('cache-control'), 'no-store');
+  assert.equal(none.headers.get('access-control-allow-origin'), null);
+  const bad = await fetch(`${BASE}/api/v1/leads`, { headers: { Authorization: 'Bearer sdr_not_a_key' } });
+  assert.equal(bad.status, 401);
+  const del = await fetch(`${BASE}/api/v1/leads`, { method: 'DELETE' });
+  assert.equal(del.status, 405);
 });
 
 await check('E2E-18', 'The signal address refuses a malformed token, a wrong method and a broken body without signing in', async () => {

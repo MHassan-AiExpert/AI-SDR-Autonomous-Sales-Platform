@@ -2,7 +2,7 @@
 
 Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE ENGINEER | FULL STACK DEVELOPER
 
-Features F01 to F23 and F25 to F28 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
+Features F01 to F23 and F25 to F29 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
 
 Every feature here carries the same deliverables as the first twenty: a live migration, agent and web code, database, agent and web tests, a feature report, use cases and test cases, pushed to GitHub.
 
@@ -25,7 +25,7 @@ flowchart LR
   subgraph P3[Phase 3 — Platform]
     F27[F27 Deliverability<br/>DONE]
     F28[F28 Salesforce<br/>and Pipedrive<br/>DONE]
-    F29[F29 Public API]
+    F29[F29 Public API<br/>DONE]
     F30[F30 Visitor identification]
   end
   P1 --> P2 --> P3
@@ -111,7 +111,9 @@ See the [feature report](../reports/F28-salesforce-pipedrive/feature-report.md).
 
 A workspace chooses HubSpot, Pipedrive or Salesforce. The sync job is shared; each CRM is a small client behind it.
 
-### F29. Public API and outbound webhooks
+### F29. Public API and outbound webhooks — **DONE**
+See the [feature report](../reports/F29-public-api-webhooks/feature-report.md) and the [API guide](API.md).
+
 A REST API with scoped keys, and events sent out when a lead changes stage, a meeting is booked or a deal is won. Unlocks Zapier and Make without building either.
 
 ### F30. Website visitor identification — company level
