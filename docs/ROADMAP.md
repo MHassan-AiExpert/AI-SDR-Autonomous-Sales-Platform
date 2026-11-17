@@ -2,7 +2,7 @@
 
 Engineered by Muhammad Hassan | AI ENGINEER | AUTOMATION SPECIALIST | SOFTWARE ENGINEER | FULL STACK DEVELOPER
 
-Features F01 to F23 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
+Features F01 to F23, F25 and F26 are built, tested and live; see [reports](../reports/README.md). This roadmap covers the next phase, written after a feature-by-feature comparison against the leading AI SDR platforms.
 
 Every feature here carries the same deliverables as the first twenty: a live migration, agent and web code, database, agent and web tests, a feature report, use cases and test cases, pushed to GitHub.
 
@@ -18,8 +18,8 @@ flowchart LR
     F23[F23 Template library<br/>DONE]
   end
   subgraph P2[Phase 2 — Channels and data]
-    F25[F25 Waterfall enrichment]
-    F26[F26 Signals agent]
+    F25[F25 Waterfall enrichment<br/>DONE]
+    F26[F26 Signals agent<br/>DONE]
     F24[F24 LinkedIn<br/>PARKED]
   end
   subgraph P3[Phase 3 — Platform]
@@ -70,7 +70,7 @@ One correction from the plan: **objection answers already existed**, in `playboo
 
 **This completes Phase 1.**
 
-## Phase 2 — Channels and data
+## Phase 2 — Channels and data — **COMPLETE** (F24 LinkedIn parked)
 
 ### F24. LinkedIn outreach — PARKED
 In the SRS as FR-6.3 (profile view, connection request, message). The UI toggle exists with no agent behind it.
@@ -84,7 +84,11 @@ See the [feature report](../reports/F25-waterfall-enrichment/feature-report.md).
 
 Replace the single Apollo lookup with a provider chain that stops at the first hit and records which provider found the contact, so match rates per provider can be compared. Falls back to the existing website scrape.
 
-### F26. Signals agent (agent #17)
+### F26. Signals agent (agent #17) — **DONE**
+See the [feature report](../reports/F26-signals-agent/feature-report.md).
+
+One change from the plan: the paid and social tiers have **no dedicated integration**. Bombora's and 6sense's APIs are documented only behind enterprise access, so a client could not be checked against their real responses. Instead each workspace has a signal address that any tool, or Zapier or Make in front of one, can post signals to. That covers every vendor, and there is nothing for the agent to skip when none is used.
+
 Watches leads already in the workspace and re-triggers outreach when something changes, with the signal as the hook. Three source tiers, each optional:
 
 | Tier | Signals | Needs |

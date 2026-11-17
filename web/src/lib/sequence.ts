@@ -46,6 +46,11 @@ export const TRIGGERS = {
   },
   bounced: { label: 'Their email bounced', clauses: [{ fact: 'email_bounced', is: true }] },
   high_score: { label: 'They score 80 or more and have not replied', clauses: [{ fact: 'score', at_least: 80 }, { fact: 'replied', is: false }] },
+  // F26: may run even after the sequence has finished, to re-open the conversation
+  new_signal: {
+    label: 'A new signal arrived (funding, hiring, a job change…) and they have not replied',
+    clauses: [{ fact: 'signal_new', is: true }, { fact: 'replied', is: false }, { fact: 'meeting_booked', is: false }],
+  },
 } as const;
 
 export type TriggerKey = keyof typeof TRIGGERS;

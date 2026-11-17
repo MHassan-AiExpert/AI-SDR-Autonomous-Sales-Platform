@@ -24,7 +24,7 @@ export type Job = {
   id: string;
   workspace_id: string;
   campaign_id: string;
-  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning' | 'crm_sync' | 'sequence';
+  type: 'campaign_plan' | 'lead_sourcing' | 'enrichment' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning' | 'crm_sync' | 'sequence' | 'signals';
   attempts: number;
   correlation_id: string;
 };
@@ -55,6 +55,8 @@ export type Campaign = {
   follow_up_delay_days: number;
   branching_enabled: boolean;
   open_tracking: boolean;
+  signals_enabled: boolean;
+  signal_kinds: string[];
   instantly_campaign_id: string | null;
   instantly_state: 'active' | 'paused' | null;
   auto_answer: boolean;
@@ -108,7 +110,7 @@ export class Store {
     const rows = await this.sql`
       select id, workspace_id, name, niche, offer, target_areas, daily_lead_limit, score_threshold, icp, source_plan,
              status, mode, outreach_status, sender_name, email_footer, sending_accounts, send_timezone, send_window_start,
-             send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, branching_enabled, open_tracking, instantly_campaign_id, instantly_state,
+             send_window_end, send_days, daily_send_limit, follow_up_count, follow_up_delay_days, branching_enabled, open_tracking, signals_enabled, signal_kinds, instantly_campaign_id, instantly_state,
              auto_answer, booking_event_type, voice_status, vapi_assistant_id, vapi_phone_number_id, call_timezone, call_window_start,
              call_window_end, call_days, call_daily_limit, call_max_attempts, call_rule, dnc_attested_at, sms_status, sms_channel, sms_from,
              whatsapp_from, whatsapp_content_sid, sms_after_days, sms_daily_limit, sms_max_messages, vapi_closer_assistant_id, audit_enabled, learned_guidance, learning_auto_apply
@@ -277,7 +279,7 @@ export class Store {
     return Number(rows[0].n);
   }
 
-  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning' | 'crm_sync' | 'sequence'): Promise<boolean> {
+  async enqueue(workspaceId: string, campaignId: string, type: 'enrichment' | 'lead_sourcing' | 'research' | 'copywriting' | 'email_outreach' | 'reply_handling' | 'reply_send' | 'voice_outreach' | 'sms_outreach' | 'ai_closer' | 'audit_reports' | 'learning' | 'crm_sync' | 'sequence' | 'signals'): Promise<boolean> {
     const rows = await this.sql`select agent_job_enqueue(${workspaceId}::uuid, ${campaignId}::uuid, ${type}) as ok`;
     return rows[0].ok === true;
   }
@@ -1743,6 +1745,101 @@ export class Store {
       select count(*)::int as n from leads
       where workspace_id = ${workspaceId}::uuid and campaign_id = ${campaignId}::uuid and created_at >= date_trunc('day', now())`;
     return rows[0].n as number;
+  }
+
+  // ---------------------------------------------------------------- signals (F26)
+
+  /** Companies in a campaign that are due a look, the longest-unchecked first. */
+  async signalCompanies(workspaceId: string, campaignId: string, limit: number, recheckDays: number):
+    Promise<{ id: string; name: string; domain: string | null; tech_stack: string[] | null }[]> {
+    return (await this.sql`
+      select co.id, co.name, co.domain, co.tech_stack
+      from companies co
+      where co.workspace_id = ${workspaceId}::uuid
+        and exists (
+          select 1 from leads l
+          where l.workspace_id = co.workspace_id and l.company_id = co.id and l.campaign_id = ${campaignId}::uuid
+            and l.stage not in ('won', 'lost', 'not_interested', 'do_not_contact'))
+        and (co.signals_checked_at is null or co.signals_checked_at < now() - make_interval(days => ${recheckDays}))
+      order by co.signals_checked_at nulls first, co.created_at
+      limit ${limit}`) as unknown as { id: string; name: string; domain: string | null; tech_stack: string[] | null }[];
+  }
+
+  /** Remembers what the site runs (when it was read) and when the company was looked at. */
+  async setCompanySignalsChecked(workspaceId: string, companyId: string, tech: string[] | null) {
+    await this.sql`
+      update companies set
+        tech_stack = coalesce(${tech}::text[], tech_stack),
+        signals_checked_at = now(), updated_at = now()
+      where workspace_id = ${workspaceId}::uuid and id = ${companyId}::uuid`;
+  }
+
+  /** Stores signals, ignoring any already known by fingerprint. Returns how many were new. */
+  async saveSignals(workspaceId: string, rows: {
+    company_id: string | null; lead_id: string | null; campaign_id: string | null;
+    kind: string; source: string; title: string; detail: string | null; url: string | null;
+    occurred_at: string | null; fingerprint: string;
+  }[]): Promise<number> {
+    if (!rows.length) return 0;
+    const inserted = await this.sql`
+      insert into signals (workspace_id, company_id, lead_id, campaign_id, kind, source, title, detail, url, occurred_at, fingerprint)
+      select ${workspaceId}::uuid, r.company_id, r.lead_id, r.campaign_id, r.kind, r.source,
+             left(r.title, 300), left(r.detail, 2000), left(r.url, 1000), r.occurred_at, r.fingerprint
+      from json_to_recordset(${this.sql.json(rows as unknown as postgres.JSONValue)}::json) as r(
+        company_id uuid, lead_id uuid, campaign_id uuid, kind text, source text, title text,
+        detail text, url text, occurred_at timestamptz, fingerprint text)
+      on conflict (workspace_id, fingerprint) do nothing
+      returning 1`;
+    return inserted.length;
+  }
+
+  /** Leads whose employer is due a check, with what we believe about it now. */
+  async leadsForJobCheck(workspaceId: string, campaignId: string, limit: number, recheckDays: number):
+    Promise<{ id: string; email: string; full_name: string | null; company_id: string | null; company_name: string | null; company_domain: string | null }[]> {
+    return (await this.sql`
+      select l.id, l.email, l.full_name, l.company_id, co.name as company_name, co.domain as company_domain
+      from leads l
+      left join companies co on co.workspace_id = l.workspace_id and co.id = l.company_id
+      where l.workspace_id = ${workspaceId}::uuid and l.campaign_id = ${campaignId}::uuid
+        and l.email is not null
+        and l.stage not in ('won', 'lost', 'not_interested', 'do_not_contact')
+        and (l.job_checked_at is null or l.job_checked_at < now() - make_interval(days => ${recheckDays}))
+        and not app.is_suppressed(l.workspace_id, l.email, l.phone)
+      order by l.job_checked_at nulls first, l.score desc nulls last
+      limit ${limit}`) as unknown as { id: string; email: string; full_name: string | null; company_id: string | null; company_name: string | null; company_domain: string | null }[];
+  }
+
+  async setJobChecked(workspaceId: string, leadIds: string[]) {
+    if (!leadIds.length) return;
+    await this.sql`
+      update leads set job_checked_at = now()
+      where workspace_id = ${workspaceId}::uuid and id = any(${leadIds}::uuid[])`;
+  }
+
+  /** The newest unused signal about a lead or its company, from the last 30 days. */
+  async latestSignal(workspaceId: string, leadId: string): Promise<{ id: string; kind: string; title: string } | null> {
+    const rows = await this.sql`
+      select s.id, s.kind, s.title
+      from signals s
+      join leads l on l.workspace_id = s.workspace_id and l.id = ${leadId}::uuid
+      where s.workspace_id = ${workspaceId}::uuid and s.status = 'new'
+        and s.created_at > now() - interval '30 days'
+        and (s.lead_id = l.id or (s.lead_id is null and s.company_id = l.company_id))
+      order by s.created_at desc
+      limit 1`;
+    return (rows[0] as { id: string; kind: string; title: string } | undefined) ?? null;
+  }
+
+  /** Marks a lead's new signals as used once a message built on them has gone out. */
+  async markSignalsUsed(workspaceId: string, leadId: string): Promise<number> {
+    const rows = await this.sql`
+      update signals s set status = 'used', used_at = now()
+      from leads l
+      where l.workspace_id = ${workspaceId}::uuid and l.id = ${leadId}::uuid
+        and s.workspace_id = l.workspace_id and s.status = 'new'
+        and (s.lead_id = l.id or (s.lead_id is null and s.company_id = l.company_id))
+      returning 1`;
+    return rows.length;
   }
 
   // ---------------------------------------------------------------- templates

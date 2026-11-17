@@ -156,6 +156,18 @@ await check('E2E-15', 'Pages fit a phone screen without sideways scrolling', asy
   await phone.close();
 });
 
+await check('E2E-18', 'The signal address refuses a malformed token, a wrong method and a broken body without signing in', async () => {
+  const bad = await fetch(`${BASE}/api/signals/not-a-token`, { method: 'POST', body: '{}' });
+  assert.equal(bad.status, 404);
+  assert.deepEqual(await bad.json(), { error: 'Unknown webhook address' });
+  const get = await fetch(`${BASE}/api/signals/${'a'.repeat(64)}`);
+  assert.equal(get.status, 405);
+  const broken = await fetch(`${BASE}/api/signals/${'a'.repeat(64)}`, { method: 'POST', body: 'not json' });
+  assert.equal(broken.status, 400);
+  assert.deepEqual(await broken.json(), { error: 'The body is not valid JSON' });
+  assert.equal(broken.headers.get('cache-control'), 'no-store');
+});
+
 if (process.env.SCREENSHOT_DIR) {
   await page.goto(`${BASE}/signup`);
   await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/signup.png` });

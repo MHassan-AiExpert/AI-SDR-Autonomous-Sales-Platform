@@ -18,7 +18,8 @@ import { sendMessage, TwilioError } from './sources/twilio.ts';
 import { startCall } from './sources/vapi.ts';
 import { callBasis, callWindowOpen, firstMessage, callPrompt, ANALYSIS_SCHEMA, VoiceError, type CallLead } from './voice.ts';
 import { textBasis, twilioCreds, CHANNEL_NAMES, OPT_OUT_LINE, TextError, type TextLead } from './texting.ts';
-import { decide, sequenceProblems, type Facts, type Step, type Variant } from './sequence.ts';
+import { decide, isSignalStep, sequenceProblems, type Facts, type Step, type Variant } from './sequence.ts';
+import { signalHook } from './signals.ts';
 import type { Deps } from './jobs.ts';
 import type { Campaign, Job, SequenceCandidate, SequenceStepRow } from './store.ts';
 import { log } from './log.ts';
@@ -42,6 +43,9 @@ export function render(template: string, lead: SequenceCandidate, senderName: st
     title: lead.title ?? '',
     sender_name: senderName ?? '',
     our_company: ourCompany,
+    // F26: the newest unused signal as an opening line, empty when there is none
+    signal: typeof lead.facts?.signal_title === 'string'
+      ? signalHook({ kind: String(lead.facts.signal_kind ?? ''), title: lead.facts.signal_title }) : '',
   };
   return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_, key: string) => values[key.toLowerCase()] ?? '').replace(/[ \t]{2,}/g, ' ').trim();
 }
@@ -247,6 +251,8 @@ export async function runSequenceSteps(deps: Deps, job: Job, campaign: Campaign)
     // Recorded either way, so a failing step is not retried for ever
     const recorded = await store.recordStepRun(ws, lead.lead_id, step.id, variant.label, outcome, detail);
     if (recorded && outcome === 'sent') {
+      // A message built on a signal has used it; the next one needs a new one
+      if (isSignalStep(step.condition)) await store.markSignalsUsed(ws, lead.lead_id);
       stats.sent++;
       stats.by_channel[step.channel] = (stats.by_channel[step.channel] ?? 0) + 1;
       const k = `${step.position}${variant.label}`;

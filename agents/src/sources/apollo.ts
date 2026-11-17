@@ -153,3 +153,43 @@ export async function enrichOrganization(domain: string, apiKey: string, fetchIm
     phone: isObject(org.primary_phone) ? str(org.primary_phone.sanitized_number) : str(org.phone),
   };
 }
+
+export type PersonMatch = { title: string | null; orgName: string | null; orgDomain: string | null; confidence: string | null };
+
+/**
+ * Where a person works now, matched by email (F26 job changes). Uses
+ * POST /people/match; field names follow Apollo's published OpenAPI schema:
+ * `person.title`, `person.organization.name` and `.primary_domain`, and
+ * `employment_history[].current`. Costs one credit when Apollo returns data,
+ * none when it finds nobody, so callers keep the volume small.
+ *
+ * A match Apollo itself rates as having no confidence is treated as no match.
+ */
+export async function matchPerson(
+  person: { email: string; name?: string | null; domain?: string | null },
+  apiKey: string,
+  fetchImpl?: Fetch,
+): Promise<PersonMatch | null> {
+  const q = new URLSearchParams({ email: person.email, reveal_personal_emails: 'false', reveal_phone_number: 'false' });
+  if (person.name) q.set('name', person.name);
+  if (person.domain) q.set('domain', person.domain);
+  const body = await requestJson('Apollo', `${BASE}/people/match?${q}`, { method: 'POST', headers: apolloHeaders(apiKey) }, { fetchImpl });
+  if (!isObject(body) || !isObject(body.person)) return null;
+  const confidence = str(body.match_confidence) ?? null;
+  if (confidence === 'none') return null;
+  const p = body.person;
+  let orgName = isObject(p.organization) ? str(p.organization.name) ?? null : null;
+  const site = isObject(p.organization) ? (str(p.organization.primary_domain) ?? str(p.organization.website_url)) : undefined;
+  let orgDomain = site ? site.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') : null;
+  let title = str(p.title) ?? null;
+  // Fall back to the current entry in the employment history
+  if (!orgName && Array.isArray(p.employment_history)) {
+    const current = p.employment_history.find((e) => isObject(e) && e.current === true);
+    if (isObject(current)) {
+      orgName = str(current.organization_name) ?? null;
+      title = title ?? str(current.title) ?? null;
+      orgDomain = orgDomain ?? null;
+    }
+  }
+  return { title, orgName, orgDomain, confidence };
+}

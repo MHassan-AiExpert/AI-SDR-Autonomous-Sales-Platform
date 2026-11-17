@@ -14,6 +14,8 @@ import {
   saveSequenceSettings, saveSequenceStep, saveSequenceVariant,
 } from '../../actions';
 import { saveSequenceTemplate } from '../../../templates/actions';
+import { saveSignalSettings } from '../../../signals/actions';
+import { BUILT_IN_HELP, BUILT_IN_KINDS, KIND_LABELS } from '@/lib/signals';
 
 export const metadata: Metadata = { title: 'Sequence' };
 
@@ -29,7 +31,7 @@ export default async function SequencePage({ params }: { params: Promise<{ works
 
   const { data: campaign } = await supabase
     .from('campaigns')
-    .select('id, name, status, branching_enabled, open_tracking, daily_send_limit, follow_up_count, follow_up_delay_days')
+    .select('id, name, status, branching_enabled, open_tracking, signals_enabled, signal_kinds, daily_send_limit, follow_up_count, follow_up_delay_days')
     .eq('workspace_id', workspace.id).eq('id', campaignId).maybeSingle();
   if (!campaign) notFound();
 
@@ -98,6 +100,37 @@ export default async function SequencePage({ params }: { params: Promise<{ works
           </ActionForm>
         ) : (
           <p className="muted">Only owners and admins can change this.</p>
+        )}
+      </section>
+
+      <section className="card stack">
+        <h2>Signals</h2>
+        <p>
+          The signals agent looks at this campaign&apos;s companies once a day for a reason to get in touch now. A step
+          set to run when &ldquo;a new signal arrived&rdquo; can open with it, even after the rest of the sequence has
+          finished. <Link href={`${base}/signals`}>See what has been found</Link>.
+        </p>
+        {manage ? (
+          <ActionForm action={saveSignalSettings} className="stack">
+            <input type="hidden" name="workspace_id" value={workspace.id} />
+            <input type="hidden" name="campaign_id" value={campaign.id} />
+            <label className="choice">
+              <input type="checkbox" name="signals_enabled" defaultChecked={campaign.signals_enabled} />
+              <span>Watch this campaign&apos;s leads for signals</span>
+            </label>
+            <fieldset className="stack">
+              <legend>What to look for</legend>
+              {BUILT_IN_KINDS.map((k) => (
+                <label key={k} className="choice">
+                  <input type="checkbox" name={`kind_${k}`} defaultChecked={(campaign.signal_kinds ?? []).includes(k)} />
+                  <span>{KIND_LABELS[k]} <small className="muted">— {BUILT_IN_HELP[k]}</small></span>
+                </label>
+              ))}
+            </fieldset>
+            <SubmitButton variant="secondary">Save signals</SubmitButton>
+          </ActionForm>
+        ) : (
+          <p className="muted">{campaign.signals_enabled ? 'Signals are on for this campaign.' : 'Signals are off for this campaign.'}</p>
         )}
       </section>
 
@@ -187,7 +220,8 @@ export default async function SequencePage({ params }: { params: Promise<{ works
                           </label>
                           <p className="muted">
                             You can use {'{{first_name}}'}, {'{{full_name}}'}, {'{{company}}'}, {'{{title}}'},{' '}
-                            {'{{sender_name}}'} and {'{{our_company}}'}. Anything else is left blank rather than printed.
+                            {'{{sender_name}}'}, {'{{our_company}}'} and {'{{signal}}'}, the newest signal as an opening
+                            line. Anything else, or a signal when there is none, is left blank rather than printed.
                           </p>
                           <label className="choice">
                             <input type="checkbox" name="active" defaultChecked={existing?.active ?? true} />

@@ -48,7 +48,7 @@ export type Facts = Record<string, unknown>;
 export const KNOWN_FACTS = [
   'stage', 'score', 'emails_sent', 'email_bounced', 'email_opened', 'replied', 'reply_type',
   'calls_made', 'call_outcome', 'texts_sent', 'meeting_booked', 'hours_since_last_touch',
-  'has_email', 'has_phone', 'steps_run',
+  'has_email', 'has_phone', 'steps_run', 'signal_new', 'signal_kind',
 ] as const;
 
 export type KnownFact = (typeof KNOWN_FACTS)[number];
@@ -155,11 +155,17 @@ const CHANNEL_NEEDS: Record<Step['channel'], 'has_email' | 'has_phone'> = {
  */
 export function decide(steps: Step[], facts: Facts, leadId: string): Decision {
   if (!steps.length) return { run: undefined, reason: 'no_steps' };
-  if (facts.stopped === true) return { run: undefined, reason: 'stopped' };
 
   const done = new Set(Array.isArray(facts.steps_done) ? (facts.steps_done as unknown[]).map(String) : []);
   const ordered = [...steps].sort((a, b) => a.position - b.position);
-  const remaining = ordered.filter((s) => !done.has(s.id));
+  let remaining = ordered.filter((s) => !done.has(s.id));
+  // A finished sequence stays finished, except for steps that wait for a new
+  // signal (F26): re-opening the conversation when something changes is what
+  // those steps are for.
+  if (facts.stopped === true) {
+    remaining = remaining.filter((s) => isSignalStep(s.condition));
+    if (!remaining.length) return { run: undefined, reason: 'stopped' };
+  }
   if (!remaining.length) return { run: undefined, reason: 'all_done' };
 
   const hours = numberOf('hours_since_last_touch', facts.hours_since_last_touch) ?? Number.POSITIVE_INFINITY;
@@ -183,7 +189,17 @@ export function decide(steps: Step[], facts: Facts, leadId: string): Decision {
     return { run: step, variant: pickVariant(step.id, leadId, step.variants) };
   }
 
+  // A finished sequence whose signal steps are not due is still finished
+  if (facts.stopped === true) return { run: undefined, reason: 'stopped' };
   return { run: undefined, reason: heldByWait ? 'waiting' : heldByContact ? 'no_contact' : 'waiting' };
+}
+
+/** A step that waits for a new signal (F26), and may run after the sequence has ended. */
+export function isSignalStep(condition: unknown): boolean {
+  const parsed = ConditionSchema.safeParse(condition ?? {});
+  if (!parsed.success) return false;
+  const clauses = parsed.data.all ?? [];
+  return clauses.some((c) => c.fact === 'signal_new' && 'is' in c && c.is === true);
 }
 
 // ---------------------------------------------------------------- validation

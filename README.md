@@ -57,6 +57,7 @@ flowchart TB
             M14["Notify and monitor<br/>Slack, logs, retries"]
             M15["CRM sync<br/>pipeline, activity"]
             M16["AI receptionist<br/>inbound campaign calls"]
+            M17["Signals agent<br/>funding, hiring, tech, job changes"]
         end
         subgraph SHARED["Shared services"]
             S1["LLM API<br/>OpenAI, Anthropic, Gemini"]
@@ -398,6 +399,7 @@ Each feature is delivered with a feature report, use cases and test cases in [`r
 | [F22](reports/F22-conditional-branching-ab-testing/feature-report.md) | Conditional branching across email, calls and texts, with A/B messages scored for significance | 48 passed |
 | [F23](reports/F23-template-library/feature-report.md) | Shared template library for sequences and snippets, with agency defaults for new client workspaces | 37 passed |
 | [F25](reports/F25-waterfall-enrichment/feature-report.md) | Waterfall enrichment: Apollo, Hunter and People Data Labs in a chosen order, stopping at the first hit, with match rates per provider | 29 passed |
+| [F26](reports/F26-signals-agent/feature-report.md) | Signals agent (agent #17): funding, news, hiring, technology and job changes, plus a signal address for intent and social tools; a sequence step can re-open a finished conversation with the signal as its opening line | 43 passed |
 
 ---
 
